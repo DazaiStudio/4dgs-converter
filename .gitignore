@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+ml-sharp/
+ref/
+video2ply/
+*.gsd
+*.bin
+.env
