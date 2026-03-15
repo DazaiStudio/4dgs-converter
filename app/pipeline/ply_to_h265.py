@@ -171,6 +171,8 @@ def start_encoder(width: int, height: int, fps: int, crf: int,
     Input: grayscale (pix_fmt gray) raw frames via stdin.
     Output: YUV420p H.265 Main Profile. ffmpeg converts gray→yuv420p by
     placing gray data in Y plane and filling U/V with 128 (neutral chroma).
+    Uses full range (pc) so 0-255 maps to 0.0-1.0 in decoder, not BT.709
+    limited range (16-235) which would clip/compress our data values.
     """
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
@@ -181,6 +183,7 @@ def start_encoder(width: int, height: int, fps: int, crf: int,
         "-i", "pipe:0",
         "-c:v", "libx265",
         "-pix_fmt", "yuv420p",
+        "-color_range", "pc",
         "-crf", str(crf),
         "-x265-params", f"keyint={fps}:min-keyint={fps}:log-level=error",
         output_path,
