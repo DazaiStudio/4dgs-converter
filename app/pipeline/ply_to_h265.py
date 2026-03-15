@@ -168,10 +168,10 @@ def start_encoder(width: int, height: int, fps: int, crf: int,
                   output_path: str) -> subprocess.Popen:
     """Start ffmpeg H.265 encoder reading raw YUV420p frames from stdin.
 
-    Input: YUV420p raw frames via stdin (Y=data, U=V=128 neutral).
-    We feed YUV420p directly instead of grayscale to AVOID ffmpeg's
-    gray→yuv420p conversion which maps 0-255 to limited range 16-235,
-    destroying ~14% of quantization precision.
+    Input: YUV420p raw frames via stdin. Data values are pre-mapped to
+    BT.709 limited range: Y = 16 + P * 219/255, so that Chrome's
+    copyExternalImageToTexture conversion R=(Y-16)/219 recovers P/255
+    exactly. U=V=128 (neutral chroma).
     """
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
@@ -195,10 +195,16 @@ _uv_cache: dict[tuple[int, int], bytes] = {}
 
 
 def write_frame(proc: subprocess.Popen, frame: np.ndarray):
-    """Write one frame as YUV420p: Y=data, U=V=128 (neutral chroma)."""
+    """Write one frame as YUV420p with limited range pre-mapping.
+
+    Maps data P (0-255) → Y = round(16 + P * 219/255) so that Chrome's
+    copyExternalImageToTexture R=(Y-16)/219 recovers P/255 exactly.
+    ~36 out of 256 input values collide (max error = 1 level = 0.4%).
+    """
     h, w = frame.shape
-    # Y plane: our actual data
-    proc.stdin.write(frame.tobytes())
+    # Pre-map to limited range: Y = 16 + P * 219/255
+    y_plane = np.round(16.0 + frame.astype(np.float32) * (219.0 / 255.0)).clip(16, 235).astype(np.uint8)
+    proc.stdin.write(y_plane.tobytes())
     # U + V planes: half resolution, filled with 128 (neutral)
     uv_key = (h // 2, w // 2)
     if uv_key not in _uv_cache:
