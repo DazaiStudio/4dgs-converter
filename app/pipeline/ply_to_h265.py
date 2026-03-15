@@ -353,6 +353,7 @@ def process_frame(ply_path: Path, bounds: dict, grid_h: int, grid_w: int):
 def convert_ply_to_h265(ply_dir: str, output_dir: str, fps: int = 24,
                         crf_position: int = 18, crf_motion: int = 22,
                         crf_appearance: int = 24,
+                        max_frames: int = 0,
                         callback=None):
     """Convert PLY sequence to 3 H.265 MP4 streams + manifest.json."""
     ply_dir = Path(ply_dir)
@@ -363,6 +364,8 @@ def convert_ply_to_h265(ply_dir: str, output_dir: str, fps: int = 24,
     ply_paths = sorted(ply_dir.glob("*.ply"))
     if not ply_paths:
         raise FileNotFoundError(f"No PLY files found in {ply_dir}")
+    if max_frames > 0:
+        ply_paths = ply_paths[:max_frames]
     frame_count = len(ply_paths)
 
     # Determine grid size from first frame
@@ -446,6 +449,7 @@ def main():
     parser.add_argument("--crf-position", type=int, default=18)
     parser.add_argument("--crf-motion", type=int, default=22)
     parser.add_argument("--crf-appearance", type=int, default=24)
+    parser.add_argument("--max-frames", type=int, default=0, help="Limit number of frames (0=all)")
     args = parser.parse_args()
 
     def progress(i, total):
@@ -462,6 +466,7 @@ def main():
         crf_position=args.crf_position,
         crf_motion=args.crf_motion,
         crf_appearance=args.crf_appearance,
+        max_frames=args.max_frames,
         callback=progress,
     )
     print(f"\nDone! {result['frame_count']} frames encoded to {result['output_dir']}")
