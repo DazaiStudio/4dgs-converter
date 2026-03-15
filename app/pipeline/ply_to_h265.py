@@ -272,3 +272,191 @@ def write_manifest(output_dir: str, sequence_name: str, frame_count: int,
     out_path = Path(output_dir) / "manifest.json"
     with open(out_path, "w") as f:
         json.dump(manifest, f, indent=2)
+
+
+# --- Main Pipeline ---
+
+H265_LEVEL_5_MAX_PIXELS = 8_912_896
+
+
+def process_frame(ply_path: Path, bounds: dict, grid_h: int, grid_w: int):
+    """Process one PLY frame -> 3 tiled grayscale stream images.
+
+    Returns:
+        (stream_pos, stream_mot, stream_app) -- each a uint8 ndarray
+    """
+    gaussians = load_gaussian_ply(str(ply_path))
+    activated = activate_gaussians(gaussians)
+    n = len(activated["position"])
+
+    # Morton sort for spatial coherence + temporal consistency
+    sorted_indices, _, _ = sort_3d_morton_order(activated["position"])
+
+    # Pad to grid size with appropriate default values
+    pad_n = grid_h * grid_w
+
+    def _sort_and_pad(arr, pad_value=0.0):
+        sorted_arr = arr[sorted_indices]
+        if len(sorted_arr) < pad_n:
+            padded = np.full((pad_n, arr.shape[1]), pad_value, dtype=arr.dtype)
+            padded[:len(sorted_arr)] = sorted_arr
+            return padded
+        return sorted_arr[:pad_n]
+
+    pos = _sort_and_pad(activated["position"])
+    rot_sorted = activated["rotation"][sorted_indices]
+    # Pad rotation with identity quaternion (W=1, X=0, Y=0, Z=0)
+    if len(rot_sorted) < pad_n:
+        rot = np.zeros((pad_n, 4), dtype=rot_sorted.dtype)
+        rot[:len(rot_sorted)] = rot_sorted
+        rot[len(rot_sorted):, 0] = 1.0  # W=1 for identity
+    else:
+        rot = rot_sorted[:pad_n]
+    so = _sort_and_pad(activated["scale_opacity"])
+    sh_dc = _sort_and_pad(activated["sh_dc"])
+
+    # Quantize
+    pos_high, pos_low = quantize_position(pos, bounds["position"]["min"], bounds["position"]["max"])
+    rot_q = quantize_uint8(rot, bounds["rotation"]["min"], bounds["rotation"]["max"])
+    so_q = quantize_uint8(so, bounds["scale_opacity"]["min"], bounds["scale_opacity"]["max"])
+    sh_q = quantize_uint8(sh_dc, bounds["sh_dc"]["min"], bounds["sh_dc"]["max"])
+
+    # Tile
+    stream_pos = tile_stream_position(pos_high, pos_low, grid_h, grid_w)
+    stream_mot = tile_stream_motion(rot_q, so_q, grid_h, grid_w)
+    stream_app = tile_stream_appearance(so_q[:, 2:4], sh_q, grid_h, grid_w)
+
+    return stream_pos, stream_mot, stream_app
+
+
+def convert_ply_to_h265(ply_dir: str, output_dir: str, fps: int = 24,
+                        crf_position: int = 18, crf_motion: int = 22,
+                        crf_appearance: int = 24,
+                        callback=None):
+    """Convert PLY sequence to 3 H.265 MP4 streams + manifest.json."""
+    ply_dir = Path(ply_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Discover PLY files
+    ply_paths = sorted(ply_dir.glob("*.ply"))
+    if not ply_paths:
+        raise FileNotFoundError(f"No PLY files found in {ply_dir}")
+    frame_count = len(ply_paths)
+
+    # Determine grid size from first frame
+    sample = load_gaussian_ply(str(ply_paths[0]))
+    gaussian_count = len(sample["position"])
+    grid_size = math.ceil(math.sqrt(gaussian_count))
+    grid_size = ((grid_size + 15) // 16) * 16
+    grid_h = grid_w = grid_size
+
+    # Validate against H.265 Level 5.0
+    pos_w, pos_h = grid_w * 3, grid_h * 2
+    mot_w, mot_h = grid_w * 3, grid_h * 2
+    app_w, app_h = grid_w * 5, grid_h
+    max_pixels = max(pos_w * pos_h, mot_w * mot_h, app_w * app_h)
+    if max_pixels > H265_LEVEL_5_MAX_PIXELS:
+        raise ValueError(
+            f"Stream dimensions ({max_pixels} pixels) exceed H.265 Level 5.0 "
+            f"limit ({H265_LEVEL_5_MAX_PIXELS}). Reduce gaussian count or grid size."
+        )
+
+    # Pass 1: Compute global quantization bounds
+    if callback:
+        callback(-1, frame_count)
+    bounds = compute_global_bounds(ply_paths)
+
+    # Start 3 parallel ffmpeg encoders
+    enc_pos = start_encoder(pos_w, pos_h, fps, crf_position,
+                            str(output_dir / "stream_position.mp4"))
+    enc_mot = start_encoder(mot_w, mot_h, fps, crf_motion,
+                            str(output_dir / "stream_motion.mp4"))
+    enc_app = start_encoder(app_w, app_h, fps, crf_appearance,
+                            str(output_dir / "stream_appearance.mp4"))
+
+    # Pass 2: Process frames sequentially
+    encoders = [enc_pos, enc_mot, enc_app]
+    try:
+        for i, ply_path in enumerate(ply_paths):
+            stream_pos, stream_mot, stream_app = process_frame(
+                ply_path, bounds, grid_h, grid_w
+            )
+            write_frame(enc_pos, stream_pos)
+            write_frame(enc_mot, stream_mot)
+            write_frame(enc_app, stream_app)
+            if callback:
+                callback(i, frame_count)
+    finally:
+        errors = []
+        for enc in encoders:
+            try:
+                finish_encoder(enc)
+            except RuntimeError as e:
+                errors.append(e)
+        if errors:
+            raise RuntimeError(f"ffmpeg encoding errors: {errors}")
+
+    # Write manifest
+    write_manifest(
+        output_dir=str(output_dir),
+        sequence_name=ply_dir.name,
+        frame_count=frame_count,
+        fps=fps,
+        grid_w=grid_w, grid_h=grid_h,
+        gaussian_count=gaussian_count,
+        bounds=bounds,
+    )
+
+    return {
+        "frame_count": frame_count,
+        "grid_size": grid_size,
+        "gaussian_count": gaussian_count,
+        "output_dir": str(output_dir),
+    }
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Convert PLY sequence to H.265 streams")
+    parser.add_argument("--input", required=True, help="Directory with frame_NNNN.ply files")
+    parser.add_argument("--output", required=True, help="Output directory")
+    parser.add_argument("--fps", type=int, default=24)
+    parser.add_argument("--crf-position", type=int, default=18)
+    parser.add_argument("--crf-motion", type=int, default=22)
+    parser.add_argument("--crf-appearance", type=int, default=24)
+    args = parser.parse_args()
+
+    def progress(i, total):
+        if i == -1:
+            print(f"Computing quantization bounds from {total} frames...")
+        else:
+            print(f"  Frame {i+1}/{total}", end="\r")
+
+    print(f"Converting PLY sequence: {args.input}")
+    result = convert_ply_to_h265(
+        ply_dir=args.input,
+        output_dir=args.output,
+        fps=args.fps,
+        crf_position=args.crf_position,
+        crf_motion=args.crf_motion,
+        crf_appearance=args.crf_appearance,
+        callback=progress,
+    )
+    print(f"\nDone! {result['frame_count']} frames encoded to {result['output_dir']}")
+    print(f"  Grid: {result['grid_size']}x{result['grid_size']}, Gaussians: {result['gaussian_count']}")
+
+    # Report file sizes
+    out = Path(result["output_dir"])
+    total = 0
+    for mp4 in sorted(out.glob("*.mp4")):
+        sz = mp4.stat().st_size
+        total += sz
+        print(f"  {mp4.name}: {sz / 1024 / 1024:.1f} MB")
+    print(f"  Total: {total / 1024 / 1024:.1f} MB")
+    if result['frame_count'] > 0:
+        print(f"  Bitrate: {total * 8 * args.fps / result['frame_count'] / 1e6:.1f} Mbps")
+
+
+if __name__ == "__main__":
+    main()
