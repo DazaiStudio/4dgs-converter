@@ -166,18 +166,17 @@ def tile_stream_appearance(so_zw: np.ndarray, sh_dc: np.ndarray,
 
 def start_encoder(width: int, height: int, fps: int, crf: int,
                   output_path: str) -> subprocess.Popen:
-    """Start ffmpeg H.265 encoder reading raw grayscale frames from stdin.
+    """Start ffmpeg H.265 encoder reading raw YUV420p frames from stdin.
 
-    Input: grayscale (pix_fmt gray) raw frames via stdin.
-    Output: YUV420p H.265 Main Profile. ffmpeg converts gray→yuv420p by
-    placing gray data in Y plane and filling U/V with 128 (neutral chroma).
-    Uses full range (pc) so 0-255 maps to 0.0-1.0 in decoder, not BT.709
-    limited range (16-235) which would clip/compress our data values.
+    Input: YUV420p raw frames via stdin (Y=data, U=V=128 neutral).
+    We feed YUV420p directly instead of grayscale to AVOID ffmpeg's
+    gray→yuv420p conversion which maps 0-255 to limited range 16-235,
+    destroying ~14% of quantization precision.
     """
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
         "-f", "rawvideo",
-        "-pix_fmt", "gray",
+        "-pix_fmt", "yuv420p",
         "-s", f"{width}x{height}",
         "-framerate", str(fps),
         "-i", "pipe:0",
@@ -191,9 +190,23 @@ def start_encoder(width: int, height: int, fps: int, crf: int,
     return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
+# Pre-allocate neutral UV planes (reused across frames to avoid allocation)
+_uv_cache: dict[tuple[int, int], bytes] = {}
+
+
 def write_frame(proc: subprocess.Popen, frame: np.ndarray):
-    """Write one grayscale frame (H, W) uint8 to the encoder."""
+    """Write one frame as YUV420p: Y=data, U=V=128 (neutral chroma)."""
+    h, w = frame.shape
+    # Y plane: our actual data
     proc.stdin.write(frame.tobytes())
+    # U + V planes: half resolution, filled with 128 (neutral)
+    uv_key = (h // 2, w // 2)
+    if uv_key not in _uv_cache:
+        uv_size = (h // 2) * (w // 2)
+        _uv_cache[uv_key] = b'\x80' * uv_size  # 128 = 0x80
+    uv_bytes = _uv_cache[uv_key]
+    proc.stdin.write(uv_bytes)  # U plane
+    proc.stdin.write(uv_bytes)  # V plane
 
 
 def finish_encoder(proc: subprocess.Popen):
