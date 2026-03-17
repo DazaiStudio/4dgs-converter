@@ -9,6 +9,7 @@ Pipeline: PLY -> load -> prune -> morton sort -> pack textures -> shuffle -> LZ4
 import json
 import math
 import os
+import re
 import struct
 import sys
 import time
@@ -65,7 +66,7 @@ def _process_single_frame(args: tuple) -> tuple[int, bytes, dict, int]:
     """Process a single PLY frame into a compressed blob. Designed for multiprocessing."""
     (
         frame_idx, ply_path, precisions, num_sh,
-        prune_keep_ratio,
+        prune_keep_ratio, uniform_texture_size,
     ) = args
 
     gaussians = load_gaussian_ply(ply_path)
@@ -76,7 +77,7 @@ def _process_single_frame(args: tuple) -> tuple[int, bytes, dict, int]:
 
     sorted_indices, min_pos, max_pos = sort_3d_morton_order(gaussians["position"])
 
-    texture_size = math.ceil(math.sqrt(gaussian_count))
+    texture_size = uniform_texture_size if uniform_texture_size else math.ceil(math.sqrt(gaussian_count))
 
     all_textures = _pack_textures(gaussians, sorted_indices, texture_size)
     textures = all_textures[:3 + num_sh]
@@ -110,7 +111,7 @@ def convert_ply_to_gsd(
     ply_folder: str,
     output_path: str,
     sequence_name: str,
-    target_fps: float = 24.0,
+    target_fps: float = 30.0,
     sh_degree: int = 0,
     position_precision: int = PRECISION_FULL,
     rotation_precision: int = PRECISION_HALF,
@@ -118,6 +119,8 @@ def convert_ply_to_gsd(
     sh_precision: int = PRECISION_HALF,
     prune_keep_ratio: Optional[float] = None,
     max_workers: Optional[int] = None,
+    start_frame: int = 0,
+    end_frame: Optional[int] = None,
     progress_callback: Optional[Callable[[str], None]] = None,
     frame_progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> dict:
@@ -145,20 +148,33 @@ def convert_ply_to_gsd(
         if progress_callback:
             progress_callback(msg)
 
-    # Find PLY files
+    # Find PLY files (natural numeric sort)
+    def _natural_sort_key(s: str):
+        return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', s)]
+
     ply_files = sorted([
         f for f in os.listdir(ply_folder)
         if f.lower().endswith(".ply")
-    ])
+    ], key=_natural_sort_key)
 
     if not ply_files:
         raise FileNotFoundError(f"No PLY files found in {ply_folder}")
+
+    # Apply frame range
+    total_available = len(ply_files)
+    if end_frame is None:
+        end_frame = total_available - 1
+    end_frame = min(end_frame, total_available - 1)
+    start_frame = max(0, min(start_frame, end_frame))
+    ply_files = ply_files[start_frame:end_frame + 1]
 
     frame_count = len(ply_files)
     num_sh = SH_DEGREE_TO_TEXTURES.get(sh_degree, 12)
 
     prune_str = f", pruning to {prune_keep_ratio*100:.0f}%" if prune_keep_ratio else ""
-    log(f"PLY -> GSD: {frame_count} frames, SH degree {sh_degree} ({num_sh} SH textures){prune_str}")
+    range_str = f" (frames {start_frame}-{end_frame} of {total_available})" if start_frame > 0 or end_frame < total_available - 1 else ""
+    log(f"PLY -> GSD: {frame_count} frames{range_str}, SH degree {sh_degree} ({num_sh} SH textures){prune_str}")
+    log(f"Target FPS: {target_fps} (make sure this matches your source video framerate)")
 
     # Precision list for all textures
     precisions = [
@@ -173,13 +189,29 @@ def convert_ply_to_gsd(
         max_workers = max(1, cpu_count // 2)
     log(f"Using {max_workers} workers")
 
+    # Pre-scan: find max gaussian count to compute uniform texture size
+    log("Pre-scanning PLY files for max gaussian count...")
+    max_gaussian_count = 0
+    for i, ply_file in enumerate(ply_files):
+        ply_path = os.path.join(ply_folder, ply_file)
+        g = load_gaussian_ply(ply_path)
+        n = len(g["position"])
+        if prune_keep_ratio is not None and prune_keep_ratio < 1.0:
+            n = int(n * prune_keep_ratio)
+        if n > max_gaussian_count:
+            max_gaussian_count = n
+        if frame_progress_callback:
+            frame_progress_callback(i + 1, frame_count)
+    uniform_texture_size = math.ceil(math.sqrt(max_gaussian_count))
+    log(f"Uniform texture size: {uniform_texture_size}x{uniform_texture_size} (max {max_gaussian_count:,} gaussians)")
+
     # Build task args
     task_args = []
     for i, ply_file in enumerate(ply_files):
         ply_path = os.path.join(ply_folder, ply_file)
         task_args.append((
             i, ply_path, precisions, num_sh,
-            prune_keep_ratio,
+            prune_keep_ratio, uniform_texture_size,
         ))
 
     # Process frames in parallel
@@ -189,7 +221,8 @@ def convert_ply_to_gsd(
     total_raw_size = 0
     total_compressed_size = 0
 
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+    executor = ProcessPoolExecutor(max_workers=max_workers)
+    try:
         futures = {
             executor.submit(_process_single_frame, args): args[0]
             for args in task_args
@@ -209,6 +242,11 @@ def convert_ply_to_gsd(
             if completed_count % 50 == 0 or completed_count == frame_count:
                 ratio = total_compressed_size / total_raw_size * 100
                 log(f"  Encoded {completed_count}/{frame_count} frames ({ratio:.1f}%)")
+    except Exception:
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        executor.shutdown(wait=True)
 
     encode_time = time.time() - t0
 
@@ -219,9 +257,10 @@ def convert_ply_to_gsd(
     expected_blob_size = results[0][2]  # raw_size of first frame
 
     log(f"Uncompressed frame size: {expected_blob_size / 1e6:.1f} MB")
-    log(f"Texture: {frame_infos[0]['textureWidth']}x{frame_infos[0]['textureHeight']}, {frame_infos[0]['gaussianCount']} gaussians")
+    log(f"Texture: {uniform_texture_size}x{uniform_texture_size}, max {max_gaussian_count:,} gaussians")
 
-    # Build header
+    # Build header — use uniform texture size and max gaussian count
+    # so UE renderer allocates correct buffers and renders all points
     header = {
         "version": 1,
         "compression": "shuffle_lz4",
@@ -229,9 +268,9 @@ def convert_ply_to_gsd(
         "frameCount": frame_count,
         "targetFPS": target_fps,
         "shDegree": sh_degree,
-        "textureWidth": frame_infos[0]["textureWidth"],
-        "textureHeight": frame_infos[0]["textureHeight"],
-        "gaussianCount": frame_infos[0]["gaussianCount"],
+        "textureWidth": uniform_texture_size,
+        "textureHeight": uniform_texture_size,
+        "gaussianCount": max_gaussian_count,
         "positionPrecision": position_precision,
         "rotationPrecision": rotation_precision,
         "scaleOpacityPrecision": scale_opacity_precision,

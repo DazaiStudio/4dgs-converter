@@ -1,10 +1,10 @@
-"""PySide6 main window for Video-to-GSD Converter."""
+"""PySide6 main window for 4DGS Converter."""
 
 import os
 import time
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QCloseEvent, QFont, QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -29,14 +29,28 @@ from app.converter.worker import PipelineWorker
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Video to GSD Converter")
-        self.setMinimumWidth(520)
+        self.setWindowTitle("4DGS Converter")
+        self.setMinimumWidth(620)
+        self.resize(620, 520)
+
+        icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         self.worker = None
         self._eta_start_time = 0.0
+        self._total_frames = 0
 
         self._env = check_all()
         self._build_ui()
-        self._on_mode_changed()
+
+    def closeEvent(self, event: QCloseEvent):
+        if self.worker and self.worker.isRunning():
+            self.worker.request_stop()
+            self.worker.quit()
+            self.worker.wait(3000)
+            if self.worker.isRunning():
+                self.worker.terminate()
+        event.accept()
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
@@ -49,7 +63,10 @@ class MainWindow(QMainWindow):
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Mode:"))
         self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["From Video", "From PLY Folder"])
+        self.mode_combo.addItems([
+            "Video \u2192 PLY / GSD",
+            "PLY Folder \u2192 GSD",
+        ])
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         mode_row.addWidget(self.mode_combo, 1)
         layout.addLayout(mode_row)
@@ -66,6 +83,11 @@ class MainWindow(QMainWindow):
         input_row.addWidget(self.input_btn)
         layout.addLayout(input_row)
 
+        # -- Info label (frame count, duration)
+        self.info_label = QLabel("")
+        self.info_label.setStyleSheet("color: gray;")
+        layout.addWidget(self.info_label)
+
         # -- FPS
         fps_row = QHBoxLayout()
         fps_row.addWidget(QLabel("FPS:"))
@@ -77,6 +99,24 @@ class MainWindow(QMainWindow):
         fps_row.addWidget(self.fps_note)
         fps_row.addStretch()
         layout.addLayout(fps_row)
+
+        # -- Frame range
+        range_row = QHBoxLayout()
+        range_row.addWidget(QLabel("Frames:"))
+        self.start_spin = QSpinBox()
+        self.start_spin.setRange(0, 0)
+        self.start_spin.setValue(0)
+        range_row.addWidget(self.start_spin)
+        range_row.addWidget(QLabel("to"))
+        self.end_spin = QSpinBox()
+        self.end_spin.setRange(0, 0)
+        self.end_spin.setValue(0)
+        range_row.addWidget(self.end_spin)
+        self.range_note = QLabel("")
+        self.range_note.setStyleSheet("color: gray;")
+        range_row.addWidget(self.range_note)
+        range_row.addStretch()
+        layout.addLayout(range_row)
 
         # -- Output
         out_row = QHBoxLayout()
@@ -100,7 +140,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.chk_keep_ply)
         layout.addWidget(self.chk_skip_gsd)
 
-        # -- Generate / Stop
+        # -- Generate / Stop / Clear
         btn_row = QHBoxLayout()
         self.generate_btn = QPushButton("Generate")
         self.generate_btn.setMinimumHeight(36)
@@ -115,6 +155,12 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self._on_stop)
         btn_row.addWidget(self.stop_btn)
+
+        self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setMinimumHeight(36)
+        self.clear_btn.clicked.connect(self._on_clear)
+        btn_row.addWidget(self.clear_btn)
+
         layout.addLayout(btn_row)
 
         # -- Progress
@@ -157,6 +203,8 @@ class MainWindow(QMainWindow):
         env_row.addStretch()
         layout.addLayout(env_row)
 
+        self._on_mode_changed()
+
     # ------------------------------------------------------------ Mode logic
     def _on_mode_changed(self):
         is_video = self.mode_combo.currentIndex() == 0
@@ -165,6 +213,7 @@ class MainWindow(QMainWindow):
         self.input_edit.setPlaceholderText(
             "Select a video file..." if is_video else "Select PLY folder..."
         )
+        self.info_label.setText("")
 
         # FPS: read-only in video mode, editable in PLY mode
         self.fps_spin.setReadOnly(is_video)
@@ -206,6 +255,7 @@ class MainWindow(QMainWindow):
 
         self.input_edit.setText(path)
         self._auto_derive_output(path)
+        self._update_info(path)
 
         # Auto-detect FPS for video
         if is_video:
@@ -235,16 +285,70 @@ class MainWindow(QMainWindow):
             out_dir = os.path.join(parent, name)
             self.output_edit.setText(os.path.join(out_dir, f"{name}.gsd"))
         else:
-            # PLY folder -> sibling .gsd
             folder_name = os.path.basename(input_path.rstrip("/\\"))
             parent = os.path.dirname(input_path.rstrip("/\\"))
             self.output_edit.setText(os.path.join(parent, f"{folder_name}.gsd"))
+
+    def _update_info(self, input_path: str):
+        """Show frame count and duration info after selecting input."""
+        is_video = self.mode_combo.currentIndex() == 0
+        if is_video:
+            from app.pipeline.video_to_images import get_video_frame_count, get_video_fps
+
+            frames = get_video_frame_count(input_path)
+            fps = get_video_fps(input_path)
+            self._total_frames = max(frames, 0)
+            if frames > 0 and fps > 0:
+                duration = frames / fps
+                self.info_label.setText(
+                    f"{frames} frames, {fps:.1f} fps, {duration:.1f}s"
+                )
+            elif frames > 0:
+                self.info_label.setText(f"{frames} frames")
+            else:
+                self.info_label.setText("")
+        else:
+            if os.path.isdir(input_path):
+                ply_count = len([
+                    f for f in os.listdir(input_path) if f.lower().endswith(".ply")
+                ])
+                self._total_frames = ply_count
+                self.info_label.setText(f"{ply_count} PLY files")
+            else:
+                self._total_frames = 0
+                self.info_label.setText("")
+
+        # Update frame range spinboxes
+        max_idx = max(self._total_frames - 1, 0)
+        self.start_spin.setRange(0, max_idx)
+        self.start_spin.setValue(0)
+        self.end_spin.setRange(0, max_idx)
+        self.end_spin.setValue(max_idx)
+        self.range_note.setText(f"(of {self._total_frames})")
 
     # --------------------------------------------------------- Log toggle
     def _toggle_log(self):
         visible = not self.log_text.isVisible()
         self.log_text.setVisible(visible)
         self.log_toggle.setText("\u25bc Log" if visible else "\u25b6 Log")
+
+    # ----------------------------------------------------------- Clear
+    def _on_clear(self):
+        self.input_edit.clear()
+        self.output_edit.clear()
+        self.fps_spin.setValue(30)
+        self.fps_note.setText("(auto-detected)")
+        self.info_label.setText("")
+        self.start_spin.setRange(0, 0)
+        self.start_spin.setValue(0)
+        self.end_spin.setRange(0, 0)
+        self.end_spin.setValue(0)
+        self.range_note.setText("")
+        self._total_frames = 0
+        self.step_label.setText("")
+        self.progress_bar.setValue(0)
+        self.eta_label.setText("")
+        self.log_text.clear()
 
     # ------------------------------------------------------- Generate / Stop
     def _on_generate(self):
@@ -281,6 +385,8 @@ class MainWindow(QMainWindow):
             input_path=input_path,
             output_path=output_path,
             fps=float(self.fps_spin.value()),
+            start_frame=self.start_spin.value(),
+            end_frame=self.end_spin.value(),
             keep_images=self.chk_keep_images.isChecked(),
             keep_ply=self.chk_keep_ply.isChecked(),
             skip_gsd=self.chk_skip_gsd.isChecked(),
@@ -304,10 +410,13 @@ class MainWindow(QMainWindow):
         self.generate_btn.setEnabled(not running)
         self.stop_btn.setEnabled(running)
         self.stop_btn.setText("Stop")
+        self.clear_btn.setEnabled(not running)
         self.mode_combo.setEnabled(not running)
         self.input_btn.setEnabled(not running)
         self.output_btn.setEnabled(not running)
         self.fps_spin.setEnabled(not running)
+        self.start_spin.setEnabled(not running)
+        self.end_spin.setEnabled(not running)
 
     # -------------------------------------------------------- Signal handlers
     def _on_progress(self, step: int, total: int, label: str):

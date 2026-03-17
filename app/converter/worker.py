@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import signal
 import time
 
 from PySide6.QtCore import QThread, Signal
@@ -34,6 +35,8 @@ class PipelineWorker(QThread):
         input_path: str,        # video file or PLY folder
         output_path: str,       # .gsd output path
         fps: float,
+        start_frame: int = 0,
+        end_frame: int = -1,
         keep_images: bool = True,
         keep_ply: bool = True,
         skip_gsd: bool = False,
@@ -44,6 +47,8 @@ class PipelineWorker(QThread):
         self.input_path = input_path
         self.output_path = output_path
         self.fps = fps
+        self.start_frame = start_frame
+        self.end_frame = end_frame
         self.keep_images = keep_images
         self.keep_ply = keep_ply
         self.skip_gsd = skip_gsd
@@ -53,13 +58,24 @@ class PipelineWorker(QThread):
 
     def request_stop(self):
         self._stop_requested = True
+        # Kill any tracked subprocess immediately
+        if hasattr(self, '_active_process') and self._active_process is not None:
+            try:
+                self._active_process.kill()
+            except OSError:
+                pass
 
     def _check_stop(self):
         if self._stop_requested:
             raise StopRequested("Stopped by user")
 
     def _log(self, msg: str):
+        self._check_stop()
         self.log_message.emit(msg)
+
+    def _frame_progress(self, cur: int, total: int):
+        self._check_stop()
+        self.frame_progress.emit(cur, total)
 
     def _derive_paths(self):
         """Derive intermediate folder paths from input/output."""
@@ -83,17 +99,17 @@ class PipelineWorker(QThread):
             self.finished_ok.emit(self.output_path)
 
         except StopRequested:
-            self._log("Stopped by user.")
+            self.log_message.emit("Stopped by user.")
             if os.path.exists(self.output_path):
                 try:
                     os.remove(self.output_path)
-                    self._log(f"Deleted partial: {self.output_path}")
+                    self.log_message.emit(f"Deleted partial: {self.output_path}")
                 except OSError:
                     pass
             self.finished_error.emit("Stopped by user")
 
         except Exception as e:
-            self._log(f"Error: {e}")
+            self.log_message.emit(f"Error: {e}")
             self.finished_error.emit(str(e))
 
     def _run_video_pipeline(self):
@@ -152,7 +168,8 @@ class PipelineWorker(QThread):
         )
 
     def _generate_ply(self):
-        from app.pipeline.images_to_ply import generate_ply
+        import re
+        import subprocess
 
         os.makedirs(self.ply_folder, exist_ok=True)
 
@@ -165,27 +182,45 @@ class PipelineWorker(QThread):
 
         self._log(f"Running SHARP predict on {image_count} images...")
 
-        device = "cuda"
+        cmd = [
+            "sharp", "predict",
+            "-i", self.images_folder,
+            "-o", self.ply_folder,
+            "--no-render",
+        ]
+
+        self._active_process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
+        )
+
+        total_images = 0
+        processed = 0
+
         try:
-            generate_ply(
-                images_folder=self.images_folder,
-                output_folder=self.ply_folder,
-                device=device,
-                progress_callback=self._log,
-                frame_progress_callback=lambda cur, total: self.frame_progress.emit(cur, total),
-            )
-        except Exception as e:
-            if "cuda" in str(e).lower():
-                self._log("CUDA failed, falling back to CPU...")
-                generate_ply(
-                    images_folder=self.images_folder,
-                    output_folder=self.ply_folder,
-                    device="cpu",
-                    progress_callback=self._log,
-                    frame_progress_callback=lambda cur, total: self.frame_progress.emit(cur, total),
-                )
-            else:
-                raise
+            for line in self._active_process.stdout:
+                self._check_stop()
+                line = line.rstrip()
+                if not line:
+                    continue
+                self._log(f"  [ml-sharp] {line}")
+
+                m = re.search(r"Processing (\d+) valid image files", line)
+                if m:
+                    total_images = int(m.group(1))
+
+                if "Processing " in line and any(
+                    ext in line.lower() for ext in (".jpg", ".png", ".jpeg", ".heic")
+                ):
+                    processed += 1
+                    if total_images > 0:
+                        self._frame_progress(processed, total_images)
+
+            self._active_process.wait()
+            if self._active_process.returncode != 0:
+                raise RuntimeError(f"ml-sharp failed with exit code {self._active_process.returncode}")
+        finally:
+            self._active_process = None
 
     def _convert_to_gsd(self):
         from app.pipeline.ply_to_gsd import convert_ply_to_gsd
@@ -193,14 +228,16 @@ class PipelineWorker(QThread):
         sequence_name = os.path.splitext(os.path.basename(self.output_path))[0]
         os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
 
-        self._log(f"Converting PLY → GSD at {self.fps} FPS...")
+        self._log(f"Converting PLY → GSD at {self.fps} FPS (frames {self.start_frame}-{self.end_frame})...")
         convert_ply_to_gsd(
             ply_folder=self.ply_folder,
             output_path=self.output_path,
             sequence_name=sequence_name,
             target_fps=self.fps,
+            start_frame=self.start_frame,
+            end_frame=self.end_frame if self.end_frame >= 0 else None,
             progress_callback=self._log,
-            frame_progress_callback=lambda cur, total: self.frame_progress.emit(cur, total),
+            frame_progress_callback=self._frame_progress,
         )
 
     def _cleanup(self):
