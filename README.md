@@ -6,7 +6,7 @@ Convert videos or 3DGS (.ply) sequences into 4DGS (.gsd) files for real-time Gau
 ![Platform](https://img.shields.io/badge/Platform-Windows%20|%20macOS-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-![4DGS Converter GUI](screenshot.png)
+![4DGS Converter GUI](screenshot-v2.png)
 
 ## What is 4DGS?
 
