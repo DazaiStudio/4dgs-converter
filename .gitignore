@@ -7,3 +7,6 @@ video2ply/
 *.gsd
 *.bin
 .env
+dist/
+build/
+*.spec.bak

@@ -1,7 +1,12 @@
 """Environment checker for Video-to-GSD converter dependencies."""
 
+import os
 import shutil
 import subprocess
+import sys
+
+# Hide subprocess console windows on Windows
+_CREATE_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 def check_ffmpeg() -> bool:
@@ -15,6 +20,7 @@ def check_sharp() -> bool:
         result = subprocess.run(
             ["sharp", "--help"],
             capture_output=True, text=True, timeout=10,
+            creationflags=_CREATE_FLAGS,
         )
         return result.returncode == 0
     except Exception:

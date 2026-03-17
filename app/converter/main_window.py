@@ -8,6 +8,7 @@ from PySide6.QtGui import QCloseEvent, QFont, QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -64,8 +65,8 @@ class MainWindow(QMainWindow):
         mode_row.addWidget(QLabel("Mode:"))
         self.mode_combo = QComboBox()
         self.mode_combo.addItems([
-            "Video \u2192 PLY / GSD",
-            "PLY Folder \u2192 GSD",
+            "Video to 4DGS (.gsd)",
+            "3DGS Sequence to 4DGS (.gsd)",
         ])
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         mode_row.addWidget(self.mode_combo, 1)
@@ -90,7 +91,7 @@ class MainWindow(QMainWindow):
 
         # -- FPS
         fps_row = QHBoxLayout()
-        fps_row.addWidget(QLabel("FPS:"))
+        fps_row.addWidget(QLabel("Target FPS:"))
         self.fps_spin = QSpinBox()
         self.fps_spin.setRange(1, 240)
         self.fps_spin.setValue(30)
@@ -100,17 +101,25 @@ class MainWindow(QMainWindow):
         fps_row.addStretch()
         layout.addLayout(fps_row)
 
-        # -- Frame range
+        # -- Range (frames or seconds)
         range_row = QHBoxLayout()
-        range_row.addWidget(QLabel("Frames:"))
-        self.start_spin = QSpinBox()
-        self.start_spin.setRange(0, 0)
-        self.start_spin.setValue(0)
+        self.range_unit = QComboBox()
+        self.range_unit.addItems(["Frames", "Seconds"])
+        self.range_unit.setFixedWidth(90)
+        self.range_unit.currentIndexChanged.connect(self._on_range_unit_changed)
+        range_row.addWidget(self.range_unit)
+        self.start_spin = QDoubleSpinBox()
+        self.start_spin.setRange(1, 1)
+        self.start_spin.setValue(1)
+        self.start_spin.setDecimals(0)
+        self.start_spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
         range_row.addWidget(self.start_spin)
         range_row.addWidget(QLabel("to"))
-        self.end_spin = QSpinBox()
-        self.end_spin.setRange(0, 0)
-        self.end_spin.setValue(0)
+        self.end_spin = QDoubleSpinBox()
+        self.end_spin.setRange(1, 1)
+        self.end_spin.setValue(1)
+        self.end_spin.setDecimals(0)
+        self.end_spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
         range_row.addWidget(self.end_spin)
         self.range_note = QLabel("")
         self.range_note.setStyleSheet("color: gray;")
@@ -132,9 +141,9 @@ class MainWindow(QMainWindow):
         # -- Checkboxes
         self.chk_keep_images = QCheckBox("Keep image sequence")
         self.chk_keep_images.setChecked(True)
-        self.chk_keep_ply = QCheckBox("Keep PLY sequence")
+        self.chk_keep_ply = QCheckBox("Keep 3DGS sequence (.ply)")
         self.chk_keep_ply.setChecked(True)
-        self.chk_skip_gsd = QCheckBox("Skip GSD (PLY only)")
+        self.chk_skip_gsd = QCheckBox("Skip 4DGS (.gsd)")
         self.chk_skip_gsd.stateChanged.connect(self._on_skip_gsd_changed)
         layout.addWidget(self.chk_keep_images)
         layout.addWidget(self.chk_keep_ply)
@@ -196,12 +205,47 @@ class MainWindow(QMainWindow):
             icon = "\u2713" if available else "\u2717"
             color = "green" if available else "red"
             lbl = QLabel(f'<span style="color:{color}">{icon}</span> {name}')
-            lbl.setToolTip(
-                f"{name} found" if available else f"{name} not found \u2014 install to enable"
-            )
             env_row.addWidget(lbl)
+            if not available:
+                install_btn = QPushButton("Install")
+                install_btn.setFixedHeight(22)
+                install_btn.setFixedWidth(50)
+                install_btn.setStyleSheet("font-size: 11px;")
+                install_btn.clicked.connect(lambda _, n=name: self._install_dep(n))
+                env_row.addWidget(install_btn)
         env_row.addStretch()
         layout.addLayout(env_row)
+
+        # -- About (collapsible)
+        self.about_toggle = QPushButton("\u25b6 About")
+        self.about_toggle.setFlat(True)
+        self.about_toggle.setStyleSheet("text-align: left; padding: 2px;")
+        self.about_toggle.clicked.connect(self._toggle_about)
+        layout.addWidget(self.about_toggle)
+
+        self.about_text = QLabel(
+            "<b>How to Use</b><br>"
+            "1. Select mode: <i>Video to 4DGS</i> or <i>3DGS Sequence to 4DGS</i><br>"
+            "2. Browse for input (video file or PLY folder)<br>"
+            "3. Adjust FPS and frame range if needed<br>"
+            "4. Click <b>Generate</b><br><br>"
+            "<b>Pipeline</b><br>"
+            "Video \u2192 Images (ffmpeg) \u2192 3DGS (.ply) (SHARP) \u2192 4DGS (.gsd)<br><br>"
+            "<b>4DGS (.gsd)</b> \u2014 Gaussian Stream Data. Compressed format for real-time "
+            "4D Gaussian Splatting playback. Byte-Shuffle + LZ4, frame-independent random access.<br>"
+            "Typical compression: ~60-70% of raw size.<br><br>"
+            "<b>3DGS to 4DGS</b> \u2014 Any 3DGS (.ply) sequence can be packed into "
+            "4DGS (.gsd), regardless of model (SHARP, PostShot, Nerfstudio, etc.).<br><br>"
+            "<b>CLI</b><br>"
+            "<code>python -m app.converter --cli -i input -o output.gsd</code><br><br>"
+            "<b>Built by <a href='https://github.com/DazaiStudio'>Dazai Studio</a></b> | "
+            "<a href='https://github.com/DazaiStudio/4dgs-converter'>GitHub</a>"
+        )
+        self.about_text.setWordWrap(True)
+        self.about_text.setOpenExternalLinks(True)
+        self.about_text.setStyleSheet("color: gray; padding: 4px 8px;")
+        self.about_text.setVisible(False)
+        layout.addWidget(self.about_text)
 
         self._on_mode_changed()
 
@@ -217,7 +261,9 @@ class MainWindow(QMainWindow):
 
         # FPS: read-only in video mode, editable in PLY mode
         self.fps_spin.setReadOnly(is_video)
-        self.fps_note.setVisible(is_video)
+        if not is_video:
+            self.fps_note.setText("(set to match source video FPS)")
+        self.fps_note.setVisible(True)
 
         # Checkboxes: only visible in video mode
         self.chk_keep_images.setVisible(is_video)
@@ -231,6 +277,39 @@ class MainWindow(QMainWindow):
         else:
             self.generate_btn.setEnabled(True)
             self.generate_btn.setToolTip("")
+
+    def _on_range_unit_changed(self):
+        """Switch between Frames (1-based int) and Seconds (float) display."""
+        is_seconds = self.range_unit.currentIndex() == 1
+        fps = max(self.fps_spin.value(), 1)
+        max_frame = max(self._total_frames, 1)
+
+        if is_seconds:
+            # Convert current frame values to seconds
+            old_start = self.start_spin.value()
+            old_end = self.end_spin.value()
+            self.start_spin.setDecimals(1)
+            self.start_spin.setSingleStep(0.1)
+            self.start_spin.setRange(0.0, (max_frame - 1) / fps)
+            self.start_spin.setValue((old_start - 1) / fps)
+            self.end_spin.setDecimals(1)
+            self.end_spin.setSingleStep(0.1)
+            self.end_spin.setRange(0.0, (max_frame - 1) / fps)
+            self.end_spin.setValue((old_end - 1) / fps)
+            self.range_note.setText(f"({max_frame} frames @ {fps} fps)")
+        else:
+            # Convert current seconds values to frames
+            old_start = self.start_spin.value()
+            old_end = self.end_spin.value()
+            self.start_spin.setDecimals(0)
+            self.start_spin.setSingleStep(1)
+            self.start_spin.setRange(1, max_frame)
+            self.start_spin.setValue(round(old_start * fps) + 1)
+            self.end_spin.setDecimals(0)
+            self.end_spin.setSingleStep(1)
+            self.end_spin.setRange(1, max_frame)
+            self.end_spin.setValue(round(old_end * fps) + 1)
+            self.range_note.setText(f"(of {self._total_frames})")
 
     def _on_skip_gsd_changed(self):
         if self.chk_skip_gsd.isChecked():
@@ -318,15 +397,76 @@ class MainWindow(QMainWindow):
                 self._total_frames = 0
                 self.info_label.setText("")
 
-        # Update frame range spinboxes
-        max_idx = max(self._total_frames - 1, 0)
-        self.start_spin.setRange(0, max_idx)
-        self.start_spin.setValue(0)
-        self.end_spin.setRange(0, max_idx)
-        self.end_spin.setValue(max_idx)
+        # Reset range to frames mode
+        self.range_unit.setCurrentIndex(0)
+        max_frame = max(self._total_frames, 1)
+        self.start_spin.setDecimals(0)
+        self.start_spin.setSingleStep(1)
+        self.start_spin.setRange(1, max_frame)
+        self.start_spin.setValue(1)
+        self.end_spin.setDecimals(0)
+        self.end_spin.setSingleStep(1)
+        self.end_spin.setRange(1, max_frame)
+        self.end_spin.setValue(max_frame)
         self.range_note.setText(f"(of {self._total_frames})")
 
-    # --------------------------------------------------------- Log toggle
+    # ------------------------------------------------- Install dependencies
+    def _install_dep(self, name: str):
+        import subprocess
+        if name == "lz4":
+            reply = QMessageBox.question(
+                self, "Install lz4",
+                "Run: pip install lz4?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                subprocess.Popen(
+                    ["pip", "install", "lz4"],
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                )
+        elif name == "ffmpeg":
+            reply = QMessageBox.question(
+                self, "Install ffmpeg",
+                "Run: winget install ffmpeg?\n\n"
+                "Alternatively, download from https://ffmpeg.org and add to PATH.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                subprocess.Popen(
+                    ["winget", "install", "ffmpeg"],
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                )
+        elif name == "sharp":
+            QMessageBox.information(
+                self, "Install SHARP (ml-sharp)",
+                "Install ml-sharp from source:\n\n"
+                "  git clone https://github.com/apple/ml-sharp\n"
+                "  cd ml-sharp\n"
+                "  pip install -e .\n\n"
+                "After installation, restart 4DGS Converter.",
+            )
+
+    # ------------------------------------------------- Frame range helpers
+    def _get_start_frame(self) -> int:
+        """Convert UI value to 0-based frame index."""
+        if self.range_unit.currentIndex() == 1:  # Seconds
+            fps = max(self.fps_spin.value(), 1)
+            return int(self.start_spin.value() * fps)
+        return int(self.start_spin.value()) - 1
+
+    def _get_end_frame(self) -> int:
+        """Convert UI value to 0-based frame index."""
+        if self.range_unit.currentIndex() == 1:  # Seconds
+            fps = max(self.fps_spin.value(), 1)
+            return int(self.end_spin.value() * fps)
+        return int(self.end_spin.value()) - 1
+
+    # --------------------------------------------------------- Toggles
+    def _toggle_about(self):
+        visible = not self.about_text.isVisible()
+        self.about_text.setVisible(visible)
+        self.about_toggle.setText("\u25bc About" if visible else "\u25b6 About")
+
     def _toggle_log(self):
         visible = not self.log_text.isVisible()
         self.log_text.setVisible(visible)
@@ -339,10 +479,15 @@ class MainWindow(QMainWindow):
         self.fps_spin.setValue(30)
         self.fps_note.setText("(auto-detected)")
         self.info_label.setText("")
-        self.start_spin.setRange(0, 0)
-        self.start_spin.setValue(0)
-        self.end_spin.setRange(0, 0)
-        self.end_spin.setValue(0)
+        self.range_unit.setCurrentIndex(0)
+        self.start_spin.setDecimals(0)
+        self.start_spin.setSingleStep(1)
+        self.start_spin.setRange(1, 1)
+        self.start_spin.setValue(1)
+        self.end_spin.setDecimals(0)
+        self.end_spin.setSingleStep(1)
+        self.end_spin.setRange(1, 1)
+        self.end_spin.setValue(1)
         self.range_note.setText("")
         self._total_frames = 0
         self.step_label.setText("")
@@ -385,8 +530,8 @@ class MainWindow(QMainWindow):
             input_path=input_path,
             output_path=output_path,
             fps=float(self.fps_spin.value()),
-            start_frame=self.start_spin.value(),
-            end_frame=self.end_spin.value(),
+            start_frame=self._get_start_frame(),
+            end_frame=self._get_end_frame(),
             keep_images=self.chk_keep_images.isChecked(),
             keep_ply=self.chk_keep_ply.isChecked(),
             skip_gsd=self.chk_skip_gsd.isChecked(),
