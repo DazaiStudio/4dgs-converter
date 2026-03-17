@@ -52,6 +52,29 @@ def get_video_frame_count(video_path: str) -> int:
             return -1
 
 
+def get_video_fps(video_path: str) -> float:
+    """Get video FPS using ffprobe. Returns -1.0 on error."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=r_frame_rate",
+                "-of", "csv=p=0",
+                video_path,
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            parts = result.stdout.strip().split("/")
+            if len(parts) == 2:
+                return float(parts[0]) / float(parts[1])
+            return float(parts[0])
+    except Exception:
+        pass
+    return -1.0
+
+
 def extract_frames(
     video_path: str,
     output_folder: str,

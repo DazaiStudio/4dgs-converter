@@ -1,0 +1,346 @@
+"""PySide6 main window for Video-to-GSD Converter."""
+
+import os
+import time
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
+from app.converter.env_check import check_all
+from app.converter.worker import PipelineWorker
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Video to GSD Converter")
+        self.setMinimumWidth(520)
+        self.worker = None
+        self._eta_start_time = 0.0
+
+        self._env = check_all()
+        self._build_ui()
+        self._on_mode_changed()
+
+    # ------------------------------------------------------------------ UI
+    def _build_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setSpacing(12)
+
+        # -- Mode selector
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Mode:"))
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["From Video", "From PLY Folder"])
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        mode_row.addWidget(self.mode_combo, 1)
+        layout.addLayout(mode_row)
+
+        # -- Input
+        input_row = QHBoxLayout()
+        self.input_label = QLabel("Input:")
+        input_row.addWidget(self.input_label)
+        self.input_edit = QLineEdit()
+        self.input_edit.setPlaceholderText("Select a video file...")
+        input_row.addWidget(self.input_edit, 1)
+        self.input_btn = QPushButton("Browse")
+        self.input_btn.clicked.connect(self._browse_input)
+        input_row.addWidget(self.input_btn)
+        layout.addLayout(input_row)
+
+        # -- FPS
+        fps_row = QHBoxLayout()
+        fps_row.addWidget(QLabel("FPS:"))
+        self.fps_spin = QSpinBox()
+        self.fps_spin.setRange(1, 240)
+        self.fps_spin.setValue(30)
+        fps_row.addWidget(self.fps_spin)
+        self.fps_note = QLabel("(auto-detected)")
+        fps_row.addWidget(self.fps_note)
+        fps_row.addStretch()
+        layout.addLayout(fps_row)
+
+        # -- Output
+        out_row = QHBoxLayout()
+        out_row.addWidget(QLabel("Output:"))
+        self.output_edit = QLineEdit()
+        self.output_edit.setPlaceholderText("Output .gsd path...")
+        out_row.addWidget(self.output_edit, 1)
+        self.output_btn = QPushButton("Browse")
+        self.output_btn.clicked.connect(self._browse_output)
+        out_row.addWidget(self.output_btn)
+        layout.addLayout(out_row)
+
+        # -- Checkboxes
+        self.chk_keep_images = QCheckBox("Keep image sequence")
+        self.chk_keep_images.setChecked(True)
+        self.chk_keep_ply = QCheckBox("Keep PLY sequence")
+        self.chk_keep_ply.setChecked(True)
+        self.chk_skip_gsd = QCheckBox("Skip GSD (PLY only)")
+        self.chk_skip_gsd.stateChanged.connect(self._on_skip_gsd_changed)
+        layout.addWidget(self.chk_keep_images)
+        layout.addWidget(self.chk_keep_ply)
+        layout.addWidget(self.chk_skip_gsd)
+
+        # -- Generate / Stop
+        btn_row = QHBoxLayout()
+        self.generate_btn = QPushButton("Generate")
+        self.generate_btn.setMinimumHeight(36)
+        font = self.generate_btn.font()
+        font.setBold(True)
+        self.generate_btn.setFont(font)
+        self.generate_btn.clicked.connect(self._on_generate)
+        btn_row.addWidget(self.generate_btn)
+
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setMinimumHeight(36)
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self._on_stop)
+        btn_row.addWidget(self.stop_btn)
+        layout.addLayout(btn_row)
+
+        # -- Progress
+        self.step_label = QLabel("")
+        layout.addWidget(self.step_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        layout.addWidget(self.progress_bar)
+
+        self.eta_label = QLabel("")
+        layout.addWidget(self.eta_label)
+
+        # -- Log (collapsible)
+        self.log_toggle = QPushButton("\u25b6 Log")
+        self.log_toggle.setFlat(True)
+        self.log_toggle.setStyleSheet("text-align: left; padding: 2px;")
+        self.log_toggle.clicked.connect(self._toggle_log)
+        layout.addWidget(self.log_toggle)
+
+        self.log_text = QPlainTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMaximumHeight(150)
+        self.log_text.setFont(QFont("Consolas", 9))
+        self.log_text.setVisible(False)
+        layout.addWidget(self.log_text)
+
+        # -- Environment status bar
+        env_row = QHBoxLayout()
+        env_row.addWidget(QLabel("Environment:"))
+        for name, available in self._env.items():
+            icon = "\u2713" if available else "\u2717"
+            color = "green" if available else "red"
+            lbl = QLabel(f'<span style="color:{color}">{icon}</span> {name}')
+            lbl.setToolTip(
+                f"{name} found" if available else f"{name} not found \u2014 install to enable"
+            )
+            env_row.addWidget(lbl)
+        env_row.addStretch()
+        layout.addLayout(env_row)
+
+    # ------------------------------------------------------------ Mode logic
+    def _on_mode_changed(self):
+        is_video = self.mode_combo.currentIndex() == 0
+        video_available = self._env.get("ffmpeg", False) and self._env.get("sharp", False)
+
+        self.input_edit.setPlaceholderText(
+            "Select a video file..." if is_video else "Select PLY folder..."
+        )
+
+        # FPS: read-only in video mode, editable in PLY mode
+        self.fps_spin.setReadOnly(is_video)
+        self.fps_note.setVisible(is_video)
+
+        # Checkboxes: only visible in video mode
+        self.chk_keep_images.setVisible(is_video)
+        self.chk_keep_ply.setVisible(is_video)
+        self.chk_skip_gsd.setVisible(is_video)
+
+        # Disable video mode if deps missing
+        if is_video and not video_available:
+            self.generate_btn.setEnabled(False)
+            self.generate_btn.setToolTip("Requires ffmpeg and sharp")
+        else:
+            self.generate_btn.setEnabled(True)
+            self.generate_btn.setToolTip("")
+
+    def _on_skip_gsd_changed(self):
+        if self.chk_skip_gsd.isChecked():
+            self.chk_keep_ply.setChecked(True)
+            self.chk_keep_ply.setEnabled(False)
+        else:
+            self.chk_keep_ply.setEnabled(True)
+
+    # ----------------------------------------------------------- File browse
+    def _browse_input(self):
+        is_video = self.mode_combo.currentIndex() == 0
+        if is_video:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Select Video",
+                "", "Video Files (*.mp4 *.mov *.avi *.mkv);;All Files (*)",
+            )
+        else:
+            path = QFileDialog.getExistingDirectory(self, "Select PLY Folder")
+
+        if not path:
+            return
+
+        self.input_edit.setText(path)
+        self._auto_derive_output(path)
+
+        # Auto-detect FPS for video
+        if is_video:
+            from app.pipeline.video_to_images import get_video_fps
+
+            fps = get_video_fps(path)
+            if fps > 0:
+                self.fps_spin.setValue(round(fps))
+                self.fps_note.setText(f"(detected: {fps:.2f})")
+            else:
+                self.fps_note.setText("(detection failed \u2014 set manually)")
+                self.fps_spin.setReadOnly(False)
+
+    def _browse_output(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save GSD", self.output_edit.text(),
+            "GSD Files (*.gsd);;All Files (*)",
+        )
+        if path:
+            self.output_edit.setText(path)
+
+    def _auto_derive_output(self, input_path: str):
+        is_video = self.mode_combo.currentIndex() == 0
+        if is_video:
+            name = os.path.splitext(os.path.basename(input_path))[0]
+            parent = os.path.dirname(input_path)
+            out_dir = os.path.join(parent, name)
+            self.output_edit.setText(os.path.join(out_dir, f"{name}.gsd"))
+        else:
+            # PLY folder -> sibling .gsd
+            folder_name = os.path.basename(input_path.rstrip("/\\"))
+            parent = os.path.dirname(input_path.rstrip("/\\"))
+            self.output_edit.setText(os.path.join(parent, f"{folder_name}.gsd"))
+
+    # --------------------------------------------------------- Log toggle
+    def _toggle_log(self):
+        visible = not self.log_text.isVisible()
+        self.log_text.setVisible(visible)
+        self.log_toggle.setText("\u25bc Log" if visible else "\u25b6 Log")
+
+    # ------------------------------------------------------- Generate / Stop
+    def _on_generate(self):
+        input_path = self.input_edit.text().strip()
+        output_path = self.output_edit.text().strip()
+
+        if not input_path:
+            QMessageBox.warning(self, "Error", "Please select an input.")
+            return
+        if not output_path:
+            QMessageBox.warning(self, "Error", "Please set an output path.")
+            return
+
+        # Check overwrite
+        if os.path.exists(output_path):
+            reply = QMessageBox.question(
+                self, "Overwrite?",
+                f"{output_path} already exists. Overwrite?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        is_video = self.mode_combo.currentIndex() == 0
+
+        self.log_text.clear()
+        self.progress_bar.setValue(0)
+        self.step_label.setText("")
+        self.eta_label.setText("")
+        self._eta_start_time = time.time()
+
+        self.worker = PipelineWorker(
+            mode="video" if is_video else "ply",
+            input_path=input_path,
+            output_path=output_path,
+            fps=float(self.fps_spin.value()),
+            keep_images=self.chk_keep_images.isChecked(),
+            keep_ply=self.chk_keep_ply.isChecked(),
+            skip_gsd=self.chk_skip_gsd.isChecked(),
+        )
+        self.worker.progress.connect(self._on_progress)
+        self.worker.frame_progress.connect(self._on_frame_progress)
+        self.worker.log_message.connect(self._on_log)
+        self.worker.finished_ok.connect(self._on_finished_ok)
+        self.worker.finished_error.connect(self._on_finished_error)
+
+        self._set_running(True)
+        self.worker.start()
+
+    def _on_stop(self):
+        if self.worker:
+            self.worker.request_stop()
+            self.stop_btn.setEnabled(False)
+            self.stop_btn.setText("Stopping...")
+
+    def _set_running(self, running: bool):
+        self.generate_btn.setEnabled(not running)
+        self.stop_btn.setEnabled(running)
+        self.stop_btn.setText("Stop")
+        self.mode_combo.setEnabled(not running)
+        self.input_btn.setEnabled(not running)
+        self.output_btn.setEnabled(not running)
+        self.fps_spin.setEnabled(not running)
+
+    # -------------------------------------------------------- Signal handlers
+    def _on_progress(self, step: int, total: int, label: str):
+        self.step_label.setText(f"Step {step}/{total}: {label}")
+        self._eta_start_time = time.time()
+        self.progress_bar.setValue(0)
+        self.eta_label.setText("")
+
+    def _on_frame_progress(self, current: int, total: int):
+        if total > 0:
+            pct = int(current / total * 100)
+            self.progress_bar.setValue(pct)
+
+            elapsed = time.time() - self._eta_start_time
+            if current > 0:
+                eta = elapsed / current * (total - current)
+                if eta >= 60:
+                    self.eta_label.setText(f"{pct}%  ETA: {eta / 60:.1f}m")
+                else:
+                    self.eta_label.setText(f"{pct}%  ETA: {eta:.0f}s")
+
+    def _on_log(self, msg: str):
+        ts = time.strftime("%H:%M:%S")
+        self.log_text.appendPlainText(f"[{ts}] {msg}")
+
+    def _on_finished_ok(self, output_path: str):
+        self._set_running(False)
+        self.step_label.setText("Done!")
+        self.progress_bar.setValue(100)
+        self.eta_label.setText("")
+        QMessageBox.information(self, "Complete", f"Output: {output_path}")
+
+    def _on_finished_error(self, error: str):
+        self._set_running(False)
+        self.step_label.setText(f"Error: {error}")
+        self.eta_label.setText("")
