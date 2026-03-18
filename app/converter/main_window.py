@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -34,12 +35,17 @@ class MainWindow(QMainWindow):
         self.setMinimumWidth(620)
         self.resize(620, 520)
 
-        icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+        import sys
+        base_dir = getattr(sys, '_MEIPASS', os.path.dirname(__file__))
+        icon_path = os.path.join(base_dir, "app", "converter", "icon.png")
+        if not os.path.exists(icon_path):
+            icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         self.worker = None
         self._eta_start_time = 0.0
         self._total_frames = 0
+        self._current_mode = 0
 
         self._env = check_all()
         self._build_ui()
@@ -60,16 +66,29 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central)
         layout.setSpacing(12)
 
-        # -- Mode selector
+        # -- Mode selector (tab-style toggle buttons)
         mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel("Mode:"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItems([
-            "Video to 4DGS (.gsd)",
-            "3DGS Sequence to 4DGS (.gsd)",
-        ])
-        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
-        mode_row.addWidget(self.mode_combo, 1)
+        mode_row.setSpacing(0)
+        self._mode_buttons = []
+        tab_style_active = (
+            "QPushButton { background: #3a3a3a; border: 1px solid #555; "
+            "border-bottom: 2px solid #4fc3f7; padding: 8px 16px; font-weight: bold; }"
+        )
+        tab_style_inactive = (
+            "QPushButton { background: #2a2a2a; border: 1px solid #444; "
+            "border-bottom: 1px solid #444; padding: 8px 16px; color: #888; }"
+            "QPushButton:hover { background: #333; color: #ccc; }"
+        )
+        for i, label in enumerate(["Video to 4DGS", "3DGS Sequence to 4DGS"]):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(i == 0)
+            btn.setStyleSheet(tab_style_active if i == 0 else tab_style_inactive)
+            btn.clicked.connect(lambda _, idx=i: self._set_mode(idx))
+            mode_row.addWidget(btn, 1)
+            self._mode_buttons.append(btn)
+        self._tab_style_active = tab_style_active
+        self._tab_style_inactive = tab_style_inactive
         layout.addLayout(mode_row)
 
         # -- Input
@@ -89,12 +108,30 @@ class MainWindow(QMainWindow):
         self.info_label.setStyleSheet("color: gray;")
         layout.addWidget(self.info_label)
 
-        # -- FPS
+        # -- Source FPS (PLY mode only)
+        self.source_fps_row = QHBoxLayout()
+        self.source_fps_label = QLabel("Source FPS:")
+        self.source_fps_row.addWidget(self.source_fps_label)
+        self.source_fps_spin = QSpinBox()
+        self.source_fps_spin.setRange(1, 240)
+        self.source_fps_spin.setValue(30)
+        self.source_fps_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self.source_fps_spin.valueChanged.connect(self._update_fps_note)
+        self.source_fps_row.addWidget(self.source_fps_spin)
+        self.source_fps_note = QLabel("(original video framerate)")
+        self.source_fps_note.setStyleSheet("color: gray;")
+        self.source_fps_row.addWidget(self.source_fps_note)
+        self.source_fps_row.addStretch()
+        layout.addLayout(self.source_fps_row)
+
+        # -- Target FPS
         fps_row = QHBoxLayout()
         fps_row.addWidget(QLabel("Target FPS:"))
         self.fps_spin = QSpinBox()
         self.fps_spin.setRange(1, 240)
         self.fps_spin.setValue(30)
+        self.fps_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self.fps_spin.valueChanged.connect(self._update_fps_note)
         fps_row.addWidget(self.fps_spin)
         self.fps_note = QLabel("(auto-detected)")
         fps_row.addWidget(self.fps_note)
@@ -227,13 +264,18 @@ class MainWindow(QMainWindow):
             "<b>How to Use</b><br>"
             "1. Select mode: <i>Video to 4DGS</i> or <i>3DGS Sequence to 4DGS</i><br>"
             "2. Browse for input (video file or PLY folder)<br>"
-            "3. Adjust FPS and frame range if needed<br>"
+            "3. Adjust Target FPS and frame range if needed<br>"
             "4. Click <b>Generate</b><br><br>"
+            "<b>FPS &amp; Frame Step</b><br>"
+            "In <i>3DGS Sequence</i> mode, set <b>Source FPS</b> to your original video framerate, "
+            "then set <b>Target FPS</b> to your desired output. "
+            "If Target &lt; Source, frames are automatically skipped to match.<br>"
+            "Example: Source 60 fps, Target 30 fps \u2192 every 2nd frame is used (half the data).<br><br>"
             "<b>Pipeline</b><br>"
             "Video \u2192 Images (ffmpeg) \u2192 3DGS (.ply) (SHARP) \u2192 4DGS (.gsd)<br><br>"
             "<b>4DGS (.gsd)</b> \u2014 Gaussian Stream Data. Compressed format for real-time "
             "4D Gaussian Splatting playback. Byte-Shuffle + LZ4, frame-independent random access.<br>"
-            "Typical compression: ~60-70% of raw size.<br><br>"
+            "Typical compression: ~30-70% of raw size.<br><br>"
             "<b>3DGS to 4DGS</b> \u2014 Any 3DGS (.ply) sequence can be packed into "
             "4DGS (.gsd), regardless of model (SHARP, PostShot, Nerfstudio, etc.).<br><br>"
             "<b>CLI</b><br>"
@@ -244,14 +286,29 @@ class MainWindow(QMainWindow):
         self.about_text.setWordWrap(True)
         self.about_text.setOpenExternalLinks(True)
         self.about_text.setStyleSheet("color: gray; padding: 4px 8px;")
-        self.about_text.setVisible(False)
-        layout.addWidget(self.about_text)
+
+        self.about_scroll = QScrollArea()
+        self.about_scroll.setWidget(self.about_text)
+        self.about_scroll.setWidgetResizable(True)
+        self.about_scroll.setMaximumHeight(180)
+        self.about_scroll.setVisible(False)
+        layout.addWidget(self.about_scroll)
 
         self._on_mode_changed()
 
     # ------------------------------------------------------------ Mode logic
+    def _set_mode(self, idx: int):
+        """Switch mode via tab buttons."""
+        self._current_mode = idx
+        for i, btn in enumerate(self._mode_buttons):
+            btn.setChecked(i == idx)
+            btn.setStyleSheet(
+                self._tab_style_active if i == idx else self._tab_style_inactive
+            )
+        self._on_mode_changed()
+
     def _on_mode_changed(self):
-        is_video = self.mode_combo.currentIndex() == 0
+        is_video = getattr(self, '_current_mode', 0) == 0
         video_available = self._env.get("ffmpeg", False) and self._env.get("sharp", False)
 
         self.input_edit.setPlaceholderText(
@@ -259,10 +316,17 @@ class MainWindow(QMainWindow):
         )
         self.info_label.setText("")
 
-        # FPS: read-only in video mode, editable in PLY mode
+        # Source FPS: only visible in PLY mode
+        self.source_fps_label.setVisible(not is_video)
+        self.source_fps_spin.setVisible(not is_video)
+        self.source_fps_note.setVisible(not is_video)
+
+        # FPS: read-only in video mode, editable in both
         self.fps_spin.setReadOnly(is_video)
-        if not is_video:
-            self.fps_note.setText("(set to match source video FPS)")
+        if is_video:
+            self.fps_note.setText("(auto-detected)")
+        else:
+            self._update_fps_note()
         self.fps_note.setVisible(True)
 
         # Checkboxes: only visible in video mode
@@ -277,6 +341,33 @@ class MainWindow(QMainWindow):
         else:
             self.generate_btn.setEnabled(True)
             self.generate_btn.setToolTip("")
+
+    def _update_fps_note(self):
+        """Update the FPS note to show frame step info in PLY mode."""
+        is_video = getattr(self, '_current_mode', 0) == 0
+        if is_video:
+            return
+        source = self.source_fps_spin.value()
+        target = self.fps_spin.value()
+        step = max(1, round(source / target))
+        if step > 1:
+            effective_fps = source / step
+            out_frames = max(self._total_frames // step, 1) if self._total_frames > 0 else 0
+            duration = f", {out_frames / effective_fps:.1f}s" if out_frames > 0 else ""
+            self.fps_note.setText(
+                f"(every {step} frames → {out_frames} frames{duration})"
+            )
+        else:
+            self.fps_note.setText("(all frames)")
+
+    def _get_frame_step(self) -> int:
+        """Calculate frame step based on source/target FPS."""
+        is_video = getattr(self, '_current_mode', 0) == 0
+        if is_video:
+            return 1
+        source = self.source_fps_spin.value()
+        target = self.fps_spin.value()
+        return max(1, round(source / target))
 
     def _on_range_unit_changed(self):
         """Switch between Frames (1-based int) and Seconds (float) display."""
@@ -320,7 +411,7 @@ class MainWindow(QMainWindow):
 
     # ----------------------------------------------------------- File browse
     def _browse_input(self):
-        is_video = self.mode_combo.currentIndex() == 0
+        is_video = getattr(self, '_current_mode', 0) == 0
         if is_video:
             path, _ = QFileDialog.getOpenFileName(
                 self, "Select Video",
@@ -357,7 +448,7 @@ class MainWindow(QMainWindow):
             self.output_edit.setText(path)
 
     def _auto_derive_output(self, input_path: str):
-        is_video = self.mode_combo.currentIndex() == 0
+        is_video = getattr(self, '_current_mode', 0) == 0
         if is_video:
             name = os.path.splitext(os.path.basename(input_path))[0]
             parent = os.path.dirname(input_path)
@@ -370,7 +461,7 @@ class MainWindow(QMainWindow):
 
     def _update_info(self, input_path: str):
         """Show frame count and duration info after selecting input."""
-        is_video = self.mode_combo.currentIndex() == 0
+        is_video = getattr(self, '_current_mode', 0) == 0
         if is_video:
             from app.pipeline.video_to_images import get_video_frame_count, get_video_fps
 
@@ -463,8 +554,8 @@ class MainWindow(QMainWindow):
 
     # --------------------------------------------------------- Toggles
     def _toggle_about(self):
-        visible = not self.about_text.isVisible()
-        self.about_text.setVisible(visible)
+        visible = not self.about_scroll.isVisible()
+        self.about_scroll.setVisible(visible)
         self.about_toggle.setText("\u25bc About" if visible else "\u25b6 About")
 
     def _toggle_log(self):
@@ -476,6 +567,7 @@ class MainWindow(QMainWindow):
     def _on_clear(self):
         self.input_edit.clear()
         self.output_edit.clear()
+        self.source_fps_spin.setValue(30)
         self.fps_spin.setValue(30)
         self.fps_note.setText("(auto-detected)")
         self.info_label.setText("")
@@ -517,7 +609,7 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        is_video = self.mode_combo.currentIndex() == 0
+        is_video = getattr(self, '_current_mode', 0) == 0
 
         self.log_text.clear()
         self.progress_bar.setValue(0)
@@ -532,6 +624,7 @@ class MainWindow(QMainWindow):
             fps=float(self.fps_spin.value()),
             start_frame=self._get_start_frame(),
             end_frame=self._get_end_frame(),
+            frame_step=self._get_frame_step(),
             keep_images=self.chk_keep_images.isChecked(),
             keep_ply=self.chk_keep_ply.isChecked(),
             skip_gsd=self.chk_skip_gsd.isChecked(),
@@ -556,7 +649,8 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled(running)
         self.stop_btn.setText("Stop")
         self.clear_btn.setEnabled(not running)
-        self.mode_combo.setEnabled(not running)
+        for btn in self._mode_buttons:
+            btn.setEnabled(not running)
         self.input_btn.setEnabled(not running)
         self.output_btn.setEnabled(not running)
         self.fps_spin.setEnabled(not running)

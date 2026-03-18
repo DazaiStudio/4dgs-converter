@@ -121,6 +121,7 @@ def convert_ply_to_gsd(
     max_workers: Optional[int] = None,
     start_frame: int = 0,
     end_frame: Optional[int] = None,
+    frame_step: int = 1,
     progress_callback: Optional[Callable[[str], None]] = None,
     frame_progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> dict:
@@ -160,13 +161,14 @@ def convert_ply_to_gsd(
     if not ply_files:
         raise FileNotFoundError(f"No PLY files found in {ply_folder}")
 
-    # Apply frame range
+    # Apply frame range and step
     total_available = len(ply_files)
     if end_frame is None:
         end_frame = total_available - 1
     end_frame = min(end_frame, total_available - 1)
     start_frame = max(0, min(start_frame, end_frame))
-    ply_files = ply_files[start_frame:end_frame + 1]
+    frame_step = max(1, frame_step)
+    ply_files = ply_files[start_frame:end_frame + 1:frame_step]
 
     frame_count = len(ply_files)
     num_sh = SH_DEGREE_TO_TEXTURES.get(sh_degree, 12)

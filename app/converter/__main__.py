@@ -12,13 +12,6 @@ import sys
 def main_gui():
     import os
 
-    # Must be called BEFORE QApplication on Windows for taskbar icon
-    if sys.platform == "win32":
-        import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "dazaistudio.4dgs-converter"
-        )
-
     from PySide6.QtWidgets import QApplication
     from PySide6.QtGui import QIcon
     from app.converter.main_window import MainWindow
@@ -26,7 +19,11 @@ def main_gui():
     app = QApplication(sys.argv)
 
     # Set app-level icon (taskbar + window)
-    icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+    # PyInstaller extracts data files to sys._MEIPASS
+    base_dir = getattr(sys, '_MEIPASS', os.path.dirname(__file__))
+    icon_path = os.path.join(base_dir, "app", "converter", "icon.png")
+    if not os.path.exists(icon_path):
+        icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 
@@ -194,4 +191,12 @@ def main():
 
 
 if __name__ == "__main__":
+    # Must be the very first thing on Windows for taskbar icon
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "dazaistudio.4dgs-converter"
+        )
+    import multiprocessing
+    multiprocessing.freeze_support()
     main()

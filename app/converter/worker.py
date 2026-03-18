@@ -37,6 +37,7 @@ class PipelineWorker(QThread):
         fps: float,
         start_frame: int = 0,
         end_frame: int = -1,
+        frame_step: int = 1,
         keep_images: bool = True,
         keep_ply: bool = True,
         skip_gsd: bool = False,
@@ -49,6 +50,7 @@ class PipelineWorker(QThread):
         self.fps = fps
         self.start_frame = start_frame
         self.end_frame = end_frame
+        self.frame_step = frame_step
         self.keep_images = keep_images
         self.keep_ply = keep_ply
         self.skip_gsd = skip_gsd
@@ -153,17 +155,25 @@ class PipelineWorker(QThread):
         if total_frames <= 0:
             raise RuntimeError(f"Could not determine frame count for {self.input_path}")
 
+        # Calculate expected extracted count
+        start = self.start_frame
+        end = self.end_frame if self.end_frame >= 0 else total_frames - 1
+        expected = end - start + 1
+
         # Resume: skip if images folder already has enough files
         existing = [f for f in os.listdir(self.images_folder) if f.endswith(".jpg")]
-        if len(existing) >= total_frames:
+        if len(existing) >= expected:
             self._log(f"Frames already extracted ({len(existing)} files), skipping.")
             return
 
-        self._log(f"Extracting {total_frames} frames...")
+        self._log(f"Extracting frames {start}-{end} ({expected} of {total_frames})...")
         extract_frames(
             video_path=self.input_path,
             output_folder=self.images_folder,
             frame_count=total_frames,
+            fps=self.fps,
+            start_frame=self.start_frame,
+            end_frame=self.end_frame,
             progress_callback=self._log,
         )
 
@@ -228,7 +238,8 @@ class PipelineWorker(QThread):
         sequence_name = os.path.splitext(os.path.basename(self.output_path))[0]
         os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
 
-        self._log(f"Converting PLY → GSD at {self.fps} FPS (frames {self.start_frame}-{self.end_frame})...")
+        step_str = f", step {self.frame_step}" if self.frame_step > 1 else ""
+        self._log(f"Converting PLY → GSD at {self.fps} FPS (frames {self.start_frame}-{self.end_frame}{step_str})...")
         convert_ply_to_gsd(
             ply_folder=self.ply_folder,
             output_path=self.output_path,
@@ -236,6 +247,7 @@ class PipelineWorker(QThread):
             target_fps=self.fps,
             start_frame=self.start_frame,
             end_frame=self.end_frame if self.end_frame >= 0 else None,
+            frame_step=self.frame_step,
             progress_callback=self._log,
             frame_progress_callback=self._frame_progress,
         )
