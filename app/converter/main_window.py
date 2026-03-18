@@ -31,7 +31,8 @@ from app.converter.worker import PipelineWorker
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("4DGS Converter")
+        from app.converter import __version__
+        self.setWindowTitle(f"4DGS Converter v{__version__}")
         self.setMinimumWidth(620)
         self.resize(620, 520)
 
@@ -281,7 +282,8 @@ class MainWindow(QMainWindow):
             "<b>CLI</b><br>"
             "<code>python -m app.converter --cli -i input -o output.gsd</code><br><br>"
             "<b>Built by <a href='https://github.com/DazaiStudio'>Dazai Studio</a></b> | "
-            "<a href='https://github.com/DazaiStudio/4dgs-converter'>GitHub</a>"
+            "<a href='https://github.com/DazaiStudio/4dgs-converter'>GitHub</a><br>"
+            "<b>Version</b> " + __import__('app.converter', fromlist=['__version__']).__version__
         )
         self.about_text.setWordWrap(True)
         self.about_text.setOpenExternalLinks(True)
