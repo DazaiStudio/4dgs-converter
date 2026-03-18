@@ -21,7 +21,7 @@ Convert videos or 3DGS (.ply) sequences into 4DGS (.gsd) files for real-time Gau
 
 - **Byte-Shuffle + LZ4** compression (~30-70% of raw size)
 - **Frame-independent random access** (O(1) seek to any frame)
-- **Compatible with any 3DGS model** (SHARP, PostShot, Nerfstudio, etc.)
+- **Compatible with any standard 3DGS .ply format** (SHARP, PostShot, Nerfstudio, etc.)
 
 ## Pipeline
 
