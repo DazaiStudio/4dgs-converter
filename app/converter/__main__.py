@@ -9,6 +9,44 @@ import argparse
 import sys
 
 
+def _find_ico():
+    """Find icon.ico in PyInstaller bundle or source tree."""
+    import os
+    for d in [
+        os.path.join(getattr(sys, '_MEIPASS', ''), "app", "converter"),
+        os.path.dirname(os.path.abspath(__file__)),
+    ]:
+        p = os.path.join(d, "icon.ico")
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def _set_native_icon(hwnd, ico_path):
+    """Set native Win32 icon via WM_SETICON + LoadImageW."""
+    import ctypes
+    user32 = ctypes.windll.user32
+    IMAGE_ICON = 1
+    LR_LOADFROMFILE = 0x00000010
+    LR_DEFAULTSIZE = 0x00000040
+    WM_SETICON = 0x0080
+    ICON_BIG = 1
+    ICON_SMALL = 0
+
+    hicon_big = user32.LoadImageW(
+        None, ico_path, IMAGE_ICON, 48, 48,
+        LR_LOADFROMFILE,
+    )
+    hicon_small = user32.LoadImageW(
+        None, ico_path, IMAGE_ICON, 16, 16,
+        LR_LOADFROMFILE,
+    )
+    if hicon_big:
+        user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
+    if hicon_small:
+        user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
+
+
 def main_gui():
     import os
 
@@ -18,20 +56,16 @@ def main_gui():
 
     app = QApplication(sys.argv)
 
-    # Set app-level icon (taskbar + window) — prefer .ico for multi-res
-    base_dir = getattr(sys, '_MEIPASS', os.path.dirname(__file__))
-    for icon_name in ["icon.ico", "icon.png"]:
-        for search_dir in [os.path.join(base_dir, "app", "converter"), os.path.dirname(__file__)]:
-            icon_path = os.path.join(search_dir, icon_name)
-            if os.path.exists(icon_path):
-                app.setWindowIcon(QIcon(icon_path))
-                break
-        else:
-            continue
-        break
-
     window = MainWindow()
     window.show()
+
+    # Force taskbar icon via native Win32 API (bypasses Qt)
+    if sys.platform == "win32":
+        hwnd = int(window.winId())
+        ico_path = _find_ico()
+        if ico_path:
+            _set_native_icon(hwnd, ico_path)
+
     sys.exit(app.exec())
 
 
@@ -176,7 +210,13 @@ def _convert_gsd(ply_folder, output_path, fps, start_frame, end_frame):
 
 
 def main():
-    # Quick check: if --cli is in args, run CLI mode
+    # Must be before QApplication for Windows taskbar grouping
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "dazaistudio.4dgs-converter"
+        )
+
     if "--cli" in sys.argv:
         parser = argparse.ArgumentParser(
             prog="python -m app.converter",
@@ -201,12 +241,6 @@ def main():
 
 
 if __name__ == "__main__":
-    # Must be the very first thing on Windows for taskbar icon
-    if sys.platform == "win32":
-        import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "dazaistudio.4dgs-converter"
-        )
     import multiprocessing
     multiprocessing.freeze_support()
     main()

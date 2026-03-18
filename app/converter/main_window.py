@@ -36,18 +36,10 @@ class MainWindow(QMainWindow):
         self.setMinimumWidth(620)
         self.resize(620, 520)
 
-        import sys
-        base_dir = getattr(sys, '_MEIPASS', os.path.dirname(__file__))
-        # Try .ico (multi-res, better for taskbar/titlebar), fallback to .png
-        for icon_name in ["icon.ico", "icon.png"]:
-            for search_dir in [os.path.join(base_dir, "app", "converter"), os.path.dirname(__file__)]:
-                icon_path = os.path.join(search_dir, icon_name)
-                if os.path.exists(icon_path):
-                    self.setWindowIcon(QIcon(icon_path))
-                    break
-            else:
-                continue
-            break
+        # Also set window-level icon as backup
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         self.worker = None
         self._eta_start_time = 0.0
         self._total_frames = 0
