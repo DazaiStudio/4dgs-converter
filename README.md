@@ -1,10 +1,14 @@
-# 4DGS Converter
-
-Convert videos or 3DGS (.ply) sequences into 4DGS (.gsd) files for real-time Gaussian Splatting playback.
-
-![Python](https://img.shields.io/badge/Python-3.10+-blue)
-![Platform](https://img.shields.io/badge/Platform-Windows%20|%20macOS-lightgrey)
-![License](https://img.shields.io/badge/License-MIT-green)
+<p align="center">
+  <img src="docs/logo.png" alt="4DGS Converter" width="200">
+  <h1 align="center">4DGS Converter</h1>
+  <p align="center">Convert videos or 3DGS (.ply) sequences into 4DGS (.gsd) files for real-time Gaussian Splatting playback.</p>
+  <p align="center">
+    <img src="https://img.shields.io/badge/Python-3.10+-blue" alt="Python">
+    <img src="https://img.shields.io/badge/Platform-Windows%20|%20macOS-lightgrey" alt="Platform">
+    <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
+    <a href="https://github.com/DazaiStudio/4dgs-converter/releases"><img src="https://img.shields.io/github/v/release/DazaiStudio/4dgs-converter?label=Release" alt="Release"></a>
+  </p>
+</p>
 
 ![4DGS Converter GUI](screenshot-v2.png)
 
