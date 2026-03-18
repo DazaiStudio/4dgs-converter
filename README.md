@@ -23,6 +23,10 @@ Convert videos or 3DGS (.ply) sequences into 4DGS (.gsd) files for real-time Gau
 - **Frame-independent random access** (O(1) seek to any frame)
 - **Compatible with any standard 3DGS .ply format** (SHARP, PostShot, Nerfstudio, etc.)
 
+## Unreal Engine Plugin
+
+Use [**Splat Renderer**](https://github.com/DazaiStudio/splat-renderer) to play `.gsd` files in Unreal Engine 5.6 in real-time. Drop the plugin into your project's `Plugins/` folder — no compilation needed.
+
 ## Pipeline
 
 ```
