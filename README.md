@@ -68,6 +68,8 @@ Video ──► Images (ffmpeg) ──► 3DGS .ply (SHARP) ──► 4DGS .gsd
 3. Adjust FPS and frame range if needed
 4. Click **Generate**
 
+<img src="docs/screenshot.png" alt="4DGS Converter GUI" width="500">
+
 ### CLI
 
 ```bash
