@@ -15,13 +15,11 @@
 ## Table of Contents
 
 - [Features](#features)
-- [Download](#download)
-- [What is 4DGS?](#what-is-4dgs)
-- [Unreal Engine Plugin](#unreal-engine-plugin)
+- [Getting Started](#getting-started)
 - [Pipeline](#pipeline)
-- [Installation](#installation)
 - [Usage](#usage)
 - [GSD Format](#gsd-format)
+- [Unreal Engine Plugin](#unreal-engine-plugin)
 - [License](#license)
 
 ---
@@ -34,43 +32,23 @@
 
 ---
 
-## Download
+## Getting Started
 
-| Platform | File |
-|----------|------|
-| Windows  | [**4DGS-Converter.exe**](https://github.com/DazaiStudio/4dgs-converter/releases/latest) |
-| macOS    | Run from source (see below) |
+### Option A: Download (Windows)
 
----
+Download [**4DGS-Converter.exe**](https://github.com/DazaiStudio/4dgs-converter/releases/latest) and run — no installation required.
 
-## What is 4DGS?
-
-**4D Gaussian Splatting** extends 3D Gaussian Splatting with a time dimension, enabling real-time playback of dynamic 3D scenes. The `.gsd` (Gaussian Stream Data) format stores compressed frame sequences for real-time playback in game engines.
-
----
-
-## Unreal Engine Plugin
-
-**Splat Renderer** — UE 5.6 plugin for real-time `.gsd` playback. *Coming soon.*
-
-## Pipeline
-
-```
-Video ──► Images (ffmpeg) ──► 3DGS .ply (SHARP) ──► 4DGS .gsd
-                                                      ▲
-              3DGS Sequence (.ply) folder ────────────┘
-```
-
-## Installation
+### Option B: Run from Source (Windows / macOS)
 
 ```bash
 git clone https://github.com/DazaiStudio/4dgs-converter.git
 cd 4dgs-converter
 pip install -r requirements.txt
 pip install PySide6 lz4
+python -m app.converter
 ```
 
-## Dependencies
+#### Dependencies
 
 | Tool | Required For | Install |
 |------|-------------|---------|
@@ -80,13 +58,21 @@ pip install PySide6 lz4
 
 > ffmpeg and SHARP are only needed for **Video → 4DGS** mode. For **3DGS Sequence → 4DGS**, only lz4 is required.
 
+---
+
+## Pipeline
+
+```
+Video ──► Images (ffmpeg) ──► 3DGS .ply (SHARP) ──► 4DGS .gsd
+                                                      ▲
+              3DGS Sequence (.ply) folder ────────────┘
+```
+
+---
+
 ## Usage
 
 ### GUI
-
-```bash
-python -m app.converter
-```
 
 1. Select mode: **Video to 4DGS** or **3DGS Sequence to 4DGS**
 2. Browse for input (video file or 3DGS sequence (.ply) folder)
@@ -119,6 +105,8 @@ python -m app.converter --cli -i video.mp4 --start 0 --end 100 --keep-ply --keep
 | `--keep-ply` | Keep PLY files (video mode) |
 | `--skip-gsd` | Stop after PLY generation (video mode) |
 
+---
+
 ## GSD Format
 
 Single-file format: `magic("GSD1") + header_size(u32) + JSON_header + frame_blobs`
@@ -132,30 +120,13 @@ All textures concatenated → LZ4 block compress
 
 Textures per frame (15 total): position, rotation, scaleOpacity, sh_0 .. sh_11
 
-## Build Executable
+---
 
-```bash
-pip install pyinstaller
-pyinstaller 4dgs_converter.spec
-```
+## Unreal Engine Plugin
 
-Output: `dist/4DGS-Converter.exe` (Windows) or `dist/4DGS-Converter.app` (macOS)
+**Splat Renderer** — UE 5.6 plugin for real-time `.gsd` playback. *Coming soon.*
 
-## Project Structure
-
-```
-app/
-  converter/          # PySide6 GUI
-    main_window.py    # Main window UI
-    worker.py         # Background pipeline thread
-    env_check.py      # Dependency checker
-  pipeline/           # Conversion modules
-    video_to_images.py
-    images_to_ply.py
-    ply_to_gsd.py
-    ply_to_raw.py
-    raw_to_gsd.py
-```
+---
 
 ## License
 
