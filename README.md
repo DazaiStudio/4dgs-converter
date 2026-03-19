@@ -16,12 +16,8 @@
 
 - [Features](#features)
 - [Getting Started](#getting-started)
-  - [Download (Windows)](#option-a-download-windows)
-  - [Run from Source](#option-b-run-from-source-windows--macos)
 - [How It Works](#how-it-works)
 - [How to Use](#how-to-use)
-  - [GUI](#gui)
-  - [CLI](#cli)
 - [Reference](#reference)
 - [License](#license)
 
