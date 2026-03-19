@@ -109,16 +109,9 @@ python -m app.converter --cli -i video.mp4 --start 0 --end 100 --keep-ply --keep
 
 ## GSD Format
 
-Single-file format: `magic("GSD1") + header_size(u32) + JSON_header + frame_blobs`
+The `.gsd` (Gaussian Stream Data) format packs an entire PLY sequence into a single compressed file — no more managing hundreds of loose files.
 
-Each frame blob is independently LZ4-compressed with byte-shuffle preprocessing:
-
-```
-Per-texture: pixels reshaped to (N, bytes_per_pixel), transposed, flattened
-All textures concatenated → LZ4 block compress
-```
-
-Textures per frame (15 total): position, rotation, scaleOpacity, sh_0 .. sh_11
+**Example:** A 6-second video at 24 FPS produces 144 PLY files totaling **8.9 GB**. The resulting `.gsd` file is **4.3 GB** (~48% compression via Byte-Shuffle + LZ4), with O(1) random access to any frame.
 
 ---
 
