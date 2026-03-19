@@ -12,12 +12,19 @@
 
 ![4DGS Converter GUI](docs/screenshot.png)
 
-## Download
+## Table of Contents
 
-| Platform | File |
-|----------|------|
-| Windows  | [**4DGS-Converter.exe**](https://github.com/DazaiStudio/4dgs-converter/releases/latest) |
-| macOS    | Run from source (see below) |
+- [Features](#features)
+- [Download](#download)
+- [What is 4DGS?](#what-is-4dgs)
+- [Unreal Engine Plugin](#unreal-engine-plugin)
+- [Pipeline](#pipeline)
+- [Installation](#installation)
+- [Usage](#usage)
+- [GSD Format](#gsd-format)
+- [License](#license)
+
+---
 
 ## Features
 
@@ -27,13 +34,22 @@
 - **Random Access** — O(1) seek to any frame in the sequence
 - **Format Support** — Works with any standard 3DGS `.ply` format (SHARP, PostShot, Nerfstudio, etc.)
 
+---
+
+## Download
+
+| Platform | File |
+|----------|------|
+| Windows  | [**4DGS-Converter.exe**](https://github.com/DazaiStudio/4dgs-converter/releases/latest) |
+| macOS    | Run from source (see below) |
+
+---
+
 ## What is 4DGS?
 
-**4D Gaussian Splatting** extends 3D Gaussian Splatting with a time dimension, enabling real-time playback of dynamic 3D scenes. The `.gsd` (Gaussian Stream Data) format stores compressed frame sequences with:
+**4D Gaussian Splatting** extends 3D Gaussian Splatting with a time dimension, enabling real-time playback of dynamic 3D scenes. The `.gsd` (Gaussian Stream Data) format stores compressed frame sequences for real-time playback in game engines.
 
-- **Byte-Shuffle + LZ4** compression (~30-70% of raw size)
-- **Frame-independent random access** (O(1) seek to any frame)
-- **Compatible with any standard 3DGS .ply format** (SHARP, PostShot, Nerfstudio, etc.)
+---
 
 ## Unreal Engine Plugin
 
