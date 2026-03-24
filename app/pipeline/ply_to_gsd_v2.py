@@ -134,9 +134,9 @@ def _process_single_frame_v2(args: tuple) -> tuple:
 
     # --- Pack blob ---
     # Codebooks (raw, not compressed)
-    rot_cb_bytes = rot_codebook.tobytes()   # 256 × 4 × 4 = 4096 bytes
-    sc_cb_bytes = sc_codebook.tobytes()     # 256 × 3 × 4 = 3072 bytes
-    sh_cb_bytes = sh_codebook.tobytes()     # 256 × 3 × 4 = 3072 bytes
+    rot_cb_bytes = rot_codebook.tobytes()   # K × 4 × 4 bytes
+    sc_cb_bytes = sc_codebook.tobytes()     # K × 3 × 4 bytes
+    sh_cb_bytes = sh_codebook.tobytes()     # K × 3 × 4 bytes
 
     section_header = struct.pack("<IIIIIIII",
         len(rot_cb_bytes),
@@ -290,10 +290,10 @@ def convert_ply_to_gsd_v2(
         "textureHeight": uniform_texture_size,
         "gaussianCount": max_gaussian_count,
         "positionEncoding": "fp16_shuffle_lz4",
-        "rotationEncoding": "vq256",
-        "scaleEncoding": "vq256",
+        "rotationEncoding": f"vq{VQ_K}",
+        "scaleEncoding": f"vq{VQ_K}",
         "opacityEncoding": "uint8",
-        "shEncoding": "vq256",
+        "shEncoding": f"vq{VQ_K}",
         "vqK": VQ_K,
         "frames": frame_infos,
     }
@@ -347,7 +347,12 @@ if __name__ == "__main__":
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--end", type=int, default=None)
     parser.add_argument("--step", type=int, default=1)
+    parser.add_argument("--vq-k", type=int, default=None, help="VQ codebook size (default: 4096)")
     args = parser.parse_args()
+
+    if args.vq_k is not None:
+        import app.pipeline.ply_to_gsd_v2 as _self
+        _self.VQ_K = args.vq_k
 
     convert_ply_to_gsd_v2(
         args.ply_folder, args.output, args.name,
