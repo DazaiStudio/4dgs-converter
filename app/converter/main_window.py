@@ -1,6 +1,7 @@
 """PySide6 main window for 4DGS Converter."""
 
 import os
+import sys
 import time
 
 from PySide6.QtCore import Qt
@@ -273,6 +274,12 @@ class MainWindow(QMainWindow):
             icon = "\u2713" if available else "\u2717"
             color = "green" if available else "red"
             lbl = QLabel(f'<span style="color:{color}">{icon}</span> {name}')
+            if not available and name == "sharp":
+                lbl.setToolTip(
+                    "sharp not found in current Python environment.\n"
+                    "Click Install to install here, or activate\n"
+                    "the environment where sharp is installed."
+                )
             env_row.addWidget(lbl)
             if not available:
                 install_btn = QPushButton("Install")
@@ -599,6 +606,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------- Install dependencies
     def _install_dep(self, name: str):
         import subprocess
+        python = sys.executable
         if name == "lz4":
             reply = QMessageBox.question(
                 self, "Install lz4",
@@ -607,7 +615,7 @@ class MainWindow(QMainWindow):
             )
             if reply == QMessageBox.StandardButton.Yes:
                 subprocess.Popen(
-                    ["pip", "install", "lz4"],
+                    [python, "-m", "pip", "install", "lz4"],
                     creationflags=subprocess.CREATE_NEW_CONSOLE,
                 )
         elif name == "ffmpeg":
@@ -623,14 +631,60 @@ class MainWindow(QMainWindow):
                     creationflags=subprocess.CREATE_NEW_CONSOLE,
                 )
         elif name == "sharp":
-            QMessageBox.information(
-                self, "Install SHARP (ml-sharp)",
-                "Install ml-sharp from source:\n\n"
-                "  git clone https://github.com/apple/ml-sharp\n"
-                "  cd ml-sharp\n"
-                "  pip install -e .\n\n"
-                "After installation, restart 4DGS Converter.",
+            # Determine install command based on whether ml-sharp source exists
+            app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            ml_sharp_dir = os.path.join(app_dir, "ml-sharp")
+            has_source = (
+                os.path.isdir(ml_sharp_dir)
+                and os.path.isfile(os.path.join(ml_sharp_dir, "pyproject.toml"))
             )
+
+            if has_source:
+                detail = f"  pip install -e {ml_sharp_dir}"
+            else:
+                detail = (
+                    f"  git clone https://github.com/apple/ml-sharp\n"
+                    f"  pip install -e {ml_sharp_dir}"
+                )
+
+            reply = QMessageBox.question(
+                self, "Install SHARP (ml-sharp)",
+                f"Install ml-sharp?\n\n"
+                f"This will run:\n{detail}\n\n"
+                f"ml-sharp has large dependencies (PyTorch, etc.)\n"
+                f"and may take several minutes to install.\n\n"
+                f"After installation, restart 4DGS Converter.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                if sys.platform == "win32":
+                    import tempfile
+                    bat = os.path.join(tempfile.gettempdir(), "_4dgs_install_sharp.bat")
+                    with open(bat, "w") as f:
+                        if not has_source:
+                            f.write(f'@echo Cloning ml-sharp...\n')
+                            f.write(f'@git clone https://github.com/apple/ml-sharp "{ml_sharp_dir}"\n')
+                            f.write(f'@if errorlevel 1 goto :end\n')
+                        f.write(f'@echo Installing ml-sharp...\n')
+                        f.write(f'@"{python}" -m pip install -e "{ml_sharp_dir}"\n')
+                        f.write(f':end\n@echo.\n@pause\n')
+                    subprocess.Popen(
+                        ["cmd", "/c", bat],
+                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    )
+                else:
+                    pip_cmd = f'"{python}" -m pip'
+                    if has_source:
+                        install_cmd = f'{pip_cmd} install -e "{ml_sharp_dir}"'
+                    else:
+                        install_cmd = (
+                            f'git clone https://github.com/apple/ml-sharp "{ml_sharp_dir}"'
+                            f' && {pip_cmd} install -e "{ml_sharp_dir}"'
+                        )
+                    subprocess.Popen(
+                        ["bash", "-c", install_cmd + '; echo "Done. Press enter to close."; read'],
+                        start_new_session=True,
+                    )
 
     # ------------------------------------------------- Frame range helpers
     def _get_start_frame(self) -> int:
@@ -754,6 +808,8 @@ class MainWindow(QMainWindow):
         self.clear_btn.setEnabled(not running)
         for btn in self._mode_buttons:
             btn.setEnabled(not running)
+        self._source_video.setEnabled(not running)
+        self._source_images.setEnabled(not running)
         self.input_btn.setEnabled(not running)
         self.output_btn.setEnabled(not running)
         self.fps_spin.setEnabled(not running)
