@@ -13,7 +13,8 @@ from typing import Callable, Optional
 
 def check_sharp_installed() -> bool:
     """Check if the sharp CLI is available."""
-    return shutil.which("sharp") is not None
+    from app.converter.env_check import find_sharp
+    return find_sharp() is not None
 
 
 def generate_ply(
@@ -50,8 +51,11 @@ def generate_ply(
 
     os.makedirs(output_folder, exist_ok=True)
 
+    from app.converter.env_check import find_sharp
+    sharp_exe = find_sharp()
+
     cmd = [
-        "sharp", "predict",
+        sharp_exe, "predict",
         "-i", images_folder,
         "-o", output_folder,
         "--no-render",

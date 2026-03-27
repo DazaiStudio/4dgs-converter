@@ -604,6 +604,30 @@ class MainWindow(QMainWindow):
         self.range_note.setText(f"(of {self._total_frames})")
 
     # ------------------------------------------------- Install dependencies
+    def _run_install_bat(self, title: str, commands: list[str]):
+        """Run install commands in a new console via a temp .bat file.
+
+        Shows success/failure and reminds user to restart.
+        The console stays open (pause) so the user can see the result.
+        """
+        import subprocess
+        import tempfile
+        bat = os.path.join(tempfile.gettempdir(), "_4dgs_install.bat")
+        with open(bat, "w") as f:
+            f.write(f"@echo === {title} ===\n@echo.\n")
+            for cmd in commands:
+                f.write(f"@{cmd}\n")
+                f.write(f"@if errorlevel 1 (\n")
+                f.write(f"  @echo.\n  @echo [FAILED] {title}\n  @echo.\n  @pause\n  @exit /b 1\n)\n")
+            f.write(f"@echo.\n")
+            f.write(f"@echo [OK] {title} succeeded.\n")
+            f.write(f"@echo Please restart 4DGS Converter.\n")
+            f.write(f"@echo.\n@pause\n")
+        subprocess.Popen(
+            ["cmd", "/c", bat],
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+        )
+
     def _install_dep(self, name: str):
         import subprocess
         python = sys.executable
@@ -614,22 +638,21 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:
-                subprocess.Popen(
-                    [python, "-m", "pip", "install", "lz4"],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE,
-                )
+                self._run_install_bat("Install lz4", [
+                    f'"{python}" -m pip install lz4',
+                ])
         elif name == "ffmpeg":
+            import webbrowser
             reply = QMessageBox.question(
                 self, "Install ffmpeg",
-                "Run: winget install ffmpeg?\n\n"
-                "Alternatively, download from https://ffmpeg.org and add to PATH.",
+                "ffmpeg is required for video frame extraction.\n\n"
+                "Open the ffmpeg download page?\n"
+                "After installing, add ffmpeg to your system PATH\n"
+                "and restart 4DGS Converter.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:
-                subprocess.Popen(
-                    ["winget", "install", "ffmpeg"],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE,
-                )
+                webbrowser.open("https://ffmpeg.org/download.html")
         elif name == "sharp":
             # Determine install command based on whether ml-sharp source exists
             app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -652,39 +675,15 @@ class MainWindow(QMainWindow):
                 f"Install ml-sharp?\n\n"
                 f"This will run:\n{detail}\n\n"
                 f"ml-sharp has large dependencies (PyTorch, etc.)\n"
-                f"and may take several minutes to install.\n\n"
-                f"After installation, restart 4DGS Converter.",
+                f"and may take several minutes to install.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:
-                if sys.platform == "win32":
-                    import tempfile
-                    bat = os.path.join(tempfile.gettempdir(), "_4dgs_install_sharp.bat")
-                    with open(bat, "w") as f:
-                        if not has_source:
-                            f.write(f'@echo Cloning ml-sharp...\n')
-                            f.write(f'@git clone https://github.com/apple/ml-sharp "{ml_sharp_dir}"\n')
-                            f.write(f'@if errorlevel 1 goto :end\n')
-                        f.write(f'@echo Installing ml-sharp...\n')
-                        f.write(f'@"{python}" -m pip install -e "{ml_sharp_dir}"\n')
-                        f.write(f':end\n@echo.\n@pause\n')
-                    subprocess.Popen(
-                        ["cmd", "/c", bat],
-                        creationflags=subprocess.CREATE_NEW_CONSOLE,
-                    )
-                else:
-                    pip_cmd = f'"{python}" -m pip'
-                    if has_source:
-                        install_cmd = f'{pip_cmd} install -e "{ml_sharp_dir}"'
-                    else:
-                        install_cmd = (
-                            f'git clone https://github.com/apple/ml-sharp "{ml_sharp_dir}"'
-                            f' && {pip_cmd} install -e "{ml_sharp_dir}"'
-                        )
-                    subprocess.Popen(
-                        ["bash", "-c", install_cmd + '; echo "Done. Press enter to close."; read'],
-                        start_new_session=True,
-                    )
+                commands = []
+                if not has_source:
+                    commands.append(f'git clone https://github.com/apple/ml-sharp "{ml_sharp_dir}"')
+                commands.append(f'"{python}" -m pip install -e "{ml_sharp_dir}"')
+                self._run_install_bat("Install SHARP (ml-sharp)", commands)
 
     # ------------------------------------------------- Frame range helpers
     def _get_start_frame(self) -> int:

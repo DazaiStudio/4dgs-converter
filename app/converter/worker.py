@@ -216,8 +216,13 @@ class PipelineWorker(QThread):
 
         self._log(f"Running SHARP predict on {image_count} images...")
 
+        from app.converter.env_check import find_sharp
+        sharp_exe = find_sharp()
+        if not sharp_exe:
+            raise RuntimeError("sharp CLI not found. Click Install in the environment bar.")
+
         cmd = [
-            "sharp", "predict",
+            sharp_exe, "predict",
             "-i", self.images_folder,
             "-o", self.ply_folder,
             "--no-render",

@@ -25,7 +25,32 @@ def _get_startupinfo():
 
 def check_ffmpeg() -> bool:
     """Check if ffmpeg is available on the system."""
-    return shutil.which("ffmpeg") is not None
+    from app.converter.env_check import find_ffmpeg
+    return find_ffmpeg() is not None
+
+
+def _get_ffmpeg() -> str:
+    """Get ffmpeg executable path. Raises RuntimeError if not found."""
+    from app.converter.env_check import find_ffmpeg
+    exe = find_ffmpeg()
+    if not exe:
+        raise RuntimeError(
+            "ffmpeg not found. Please install ffmpeg and ensure it's in your PATH.\n"
+            "Download from: https://ffmpeg.org/download.html"
+        )
+    return exe
+
+
+def _get_ffprobe() -> str:
+    """Get ffprobe executable path (next to ffmpeg)."""
+    ffmpeg = _get_ffmpeg()
+    ffprobe = os.path.join(
+        os.path.dirname(ffmpeg),
+        "ffprobe.exe" if sys.platform == "win32" else "ffprobe",
+    )
+    if not os.path.isfile(ffprobe):
+        raise RuntimeError("ffprobe not found next to ffmpeg.")
+    return ffprobe
 
 
 def get_video_frame_count(video_path: str) -> int:
@@ -34,7 +59,7 @@ def get_video_frame_count(video_path: str) -> int:
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "error",
+                _get_ffprobe(), "-v", "error",
                 "-select_streams", "v:0",
                 "-show_entries", "stream=nb_frames",
                 "-of", "csv=p=0",
@@ -54,7 +79,7 @@ def get_video_frame_count(video_path: str) -> int:
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "error",
+                _get_ffprobe(), "-v", "error",
                 "-select_streams", "v:0",
                 "-count_packets",
                 "-show_entries", "stream=nb_read_packets",
@@ -88,7 +113,7 @@ def _get_video_duration(video_path: str) -> float:
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "error",
+                _get_ffprobe(), "-v", "error",
                 "-show_entries", "format=duration",
                 "-of", "csv=p=0",
                 video_path,
@@ -110,7 +135,7 @@ def get_video_fps(video_path: str) -> float:
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "error",
+                _get_ffprobe(), "-v", "error",
                 "-select_streams", "v:0",
                 "-show_entries", "stream=r_frame_rate",
                 "-of", "csv=p=0",
@@ -157,11 +182,7 @@ def extract_frames(
         if progress_callback:
             progress_callback(msg)
 
-    if not check_ffmpeg():
-        raise RuntimeError(
-            "ffmpeg not found. Please install ffmpeg and ensure it's in your PATH.\n"
-            "Download from: https://ffmpeg.org/download.html"
-        )
+    ffmpeg_exe = _get_ffmpeg()  # raises RuntimeError if not found
 
     if not os.path.isfile(video_path):
         raise FileNotFoundError(f"Video file not found: {video_path}")
@@ -189,7 +210,7 @@ def extract_frames(
 
     output_pattern = os.path.join(output_folder, "frame_%04d.jpg")
 
-    cmd = ["ffmpeg"]
+    cmd = [ffmpeg_exe]
     if ss_time > 0:
         cmd += ["-ss", f"{ss_time:.3f}"]
     cmd += ["-i", video_path]
