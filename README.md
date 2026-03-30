@@ -71,7 +71,8 @@ Image Sequence ──────────────────► 3DGS .p
 3. Adjust FPS and frame range if needed
 4. Click **Generate**
 
-<img src="docs/screenshot.png" alt="4DGS Converter - Video Mode" width="400"> <img src="docs/screenshot_imgseq.png" alt="4DGS Converter - Image Sequence Mode" width="400">
+<img src="docs/screenshot.png" alt="4DGS Converter - Video to 4DGS" width="600">
+<img src="docs/screenshot_tab2.png" alt="4DGS Converter - 3DGS Sequence to 4DGS" width="400">
 
 ### CLI
 
