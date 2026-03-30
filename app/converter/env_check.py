@@ -44,15 +44,30 @@ def check_ffmpeg() -> bool:
 
 def find_sharp() -> str | None:
     """Find the sharp CLI executable."""
+    exe = "sharp.exe" if sys.platform == "win32" else "sharp"
     # Check PATH first
     found = shutil.which("sharp")
     if found:
         return found
     # Also check current Python's Scripts directory (may not be in PATH)
     scripts_dir = os.path.join(os.path.dirname(sys.executable), "Scripts")
-    candidate = os.path.join(scripts_dir, "sharp.exe" if sys.platform == "win32" else "sharp")
+    candidate = os.path.join(scripts_dir, exe)
     if os.path.isfile(candidate):
         return candidate
+    # Search other Python installations on Windows (e.g. sharp installed in a
+    # different Python version than the one running the converter)
+    if sys.platform == "win32":
+        search_roots = [
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Python"),
+            "C:\\Python",
+        ]
+        for root in search_roots:
+            if not os.path.isdir(root):
+                continue
+            for entry in os.listdir(root):
+                candidate = os.path.join(root, entry, "Scripts", exe)
+                if os.path.isfile(candidate):
+                    return candidate
     return None
 
 

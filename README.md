@@ -1,7 +1,7 @@
 <p align="center">
   <img src="docs/logo.png" alt="4DGS Converter" width="200">
   <h1 align="center">4DGS Converter</h1>
-  <p align="center">Convert videos or 3DGS (.ply) sequences into 4DGS (.gsd) files for real-time Gaussian Splatting playback.</p>
+  <p align="center">Convert videos, image sequences, or 3DGS (.ply) sequences into 4DGS (.gsd) files for real-time Gaussian Splatting playback.</p>
   <p align="center">
     <img src="https://img.shields.io/badge/Python-3.10+-blue" alt="Python">
     <img src="https://img.shields.io/badge/Platform-Windows%20|%20macOS-lightgrey" alt="Platform">
@@ -25,7 +25,9 @@
 
 ## Features
 
-- **GUI** : One-click conversion with visual controls for FPS, frame range, and mode selection
+- **3 Input Modes** : Video, Image Sequence (.jpg/.png/.heic), or 3DGS Sequence (.ply)
+- **GSD v2 (SHARP-VQ)** : New compression format — ~78% smaller than v1 using per-frame vector quantization
+- **GUI** : Dark-themed interface with one-click SHARP install, dependency status, and visual controls
 - **CLI** : Command-line interface for scripting and AI agent integration (Claude, GPT, etc.)
 - **Format Support** : Works with any standard 3DGS `.ply` format (SHARP, PostShot, Nerfstudio, etc.)
 
@@ -43,7 +45,7 @@ Download [**4DGS-Converter.exe**](https://github.com/DazaiStudio/4dgs-converter/
 git clone https://github.com/DazaiStudio/4dgs-converter.git
 cd 4dgs-converter
 pip install -r requirements.txt
-pip install PySide6 lz4
+pip install PySide6 lz4 scikit-learn
 python -m app.converter
 ```
 
@@ -52,9 +54,10 @@ python -m app.converter
 ## How It Works
 
 ```
-Video ──► Images (ffmpeg) ──► 3DGS .ply (SHARP) ──► 4DGS .gsd
-                                                      ▲
-              3DGS Sequence (.ply) folder ────────────┘
+Video ──────────► Images (ffmpeg) ──► 3DGS .ply (SHARP) ──► 4DGS .gsd
+Image Sequence ──────────────────► 3DGS .ply (SHARP) ──► 4DGS .gsd
+                                                            ▲
+                    3DGS Sequence (.ply) folder ───────────┘
 ```
 
 ---
@@ -63,8 +66,8 @@ Video ──► Images (ffmpeg) ──► 3DGS .ply (SHARP) ──► 4DGS .gsd
 
 ### GUI
 
-1. Select mode: **Video to 4DGS** or **3DGS Sequence to 4DGS**
-2. Browse for input (video file or 3DGS sequence (.ply) folder)
+1. Select mode: **Video to 4DGS**, **Image Sequence to 4DGS**, or **3DGS Sequence to 4DGS**
+2. Browse for input (video file, image folder, or 3DGS sequence folder)
 3. Adjust FPS and frame range if needed
 4. Click **Generate**
 
@@ -75,6 +78,9 @@ Video ──► Images (ffmpeg) ──► 3DGS .ply (SHARP) ──► 4DGS .gsd
 ```bash
 # Video to GSD (full pipeline)
 python -m app.converter --cli -i video.mp4 -o output.gsd
+
+# Image sequence to GSD
+python -m app.converter --cli -i /path/to/images -o output.gsd --mode images --fps 30
 
 # 3DGS sequence (.ply) folder to GSD
 python -m app.converter --cli -i /path/to/ply_folder -o output.gsd --fps 24
@@ -88,13 +94,19 @@ python -m app.converter --cli -i video.mp4 --start 0 --end 100 --keep-ply --keep
 ## Reference
 
 <details>
-<summary><strong>4DGS / GSD Format</strong></summary>
+<summary><strong>GSD Format</strong></summary>
 
 **4D Gaussian Splatting** extends 3DGS with a time dimension, enabling real-time playback of dynamic 3D scenes.
 
 The `.gsd` (Gaussian Stream Data) format packs an entire PLY sequence into a single compressed file, with O(1) random access to any frame.
 
-**Example:** A 6-second video at 24 FPS produces 144 PLY files totaling **8.9 GB**. The resulting `.gsd` file is **4.3 GB** (~48% compression via Byte-Shuffle + LZ4).
+| Version | Compression | Typical Size | Notes |
+|---------|------------|-------------|-------|
+| **v1** | Byte-Shuffle + LZ4 | ~64% of raw | Fast, every frame independent |
+| **v2** | SHARP-VQ (per-frame VQ + LZ4) | ~22% of raw | 73% smaller than v1, designed for SHARP output |
+
+**Example (1.18M gaussians, SH0, per frame):**
+- Raw: ~47 MB &rarr; GSD v1: ~30 MB &rarr; GSD v2: ~8 MB
 
 </details>
 
@@ -104,15 +116,15 @@ The `.gsd` (Gaussian Stream Data) format packs an entire PLY sequence into a sin
 | Flag | Description |
 |------|-------------|
 | `--cli` | Run in CLI mode (no GUI) |
-| `-i, --input` | Input video file or 3DGS sequence (.ply) folder |
+| `-i, --input` | Input video file, image folder, or 3DGS sequence (.ply) folder |
 | `-o, --output` | Output .gsd path (auto-derived if omitted) |
-| `--mode` | `auto`, `video`, or `ply` (default: auto-detect) |
+| `--mode` | `auto`, `video`, `images`, or `ply` (default: auto-detect) |
 | `--fps` | Target FPS (default: 30, auto-detected for video) |
 | `--start` | Start frame, 0-based (default: 0) |
 | `--end` | End frame, 0-based (default: last) |
 | `--keep-images` | Keep extracted images (video mode) |
-| `--keep-ply` | Keep PLY files (video mode) |
-| `--skip-gsd` | Stop after PLY generation (video mode) |
+| `--keep-ply` | Keep PLY files (video/images mode) |
+| `--skip-gsd` | Stop after PLY generation (video/images mode) |
 
 </details>
 
@@ -122,10 +134,11 @@ The `.gsd` (Gaussian Stream Data) format packs an entire PLY sequence into a sin
 | Tool | Required For | Install |
 |------|-------------|---------|
 | **ffmpeg** | Video frame extraction | `winget install ffmpeg` (Win) / `brew install ffmpeg` (Mac) |
-| **SHARP** (ml-sharp) | Video → 3DGS | [apple/ml-sharp](https://github.com/apple/ml-sharp) |
+| **SHARP** (ml-sharp) | Video/Images → 3DGS | [apple/ml-sharp](https://github.com/apple/ml-sharp) — or click **Install** in the GUI |
 | **lz4** | GSD compression | `pip install lz4` |
+| **scikit-learn** | GSD v2 (VQ encoding) | `pip install scikit-learn` |
 
-ffmpeg and SHARP are only needed for **Video → 4DGS** mode. For **3DGS Sequence → 4DGS**, only lz4 is required.
+ffmpeg and SHARP are only needed for **Video/Images → 4DGS** mode. For **3DGS Sequence → 4DGS**, only lz4 is required.
 
 </details>
 

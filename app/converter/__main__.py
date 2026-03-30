@@ -51,10 +51,31 @@ def main_gui():
     import os
 
     from PySide6.QtWidgets import QApplication
-    from PySide6.QtGui import QIcon
+    from PySide6.QtGui import QIcon, QPalette, QColor
+    from PySide6.QtCore import Qt
     from app.converter.main_window import MainWindow
 
     app = QApplication(sys.argv)
+
+    # Force dark theme regardless of system setting
+    app.setStyle("Fusion")
+    dark = QPalette()
+    dark.setColor(QPalette.Window, QColor(43, 43, 43))
+    dark.setColor(QPalette.WindowText, QColor(208, 208, 208))
+    dark.setColor(QPalette.Base, QColor(30, 30, 30))
+    dark.setColor(QPalette.AlternateBase, QColor(43, 43, 43))
+    dark.setColor(QPalette.ToolTipBase, QColor(50, 50, 50))
+    dark.setColor(QPalette.ToolTipText, QColor(208, 208, 208))
+    dark.setColor(QPalette.Text, QColor(208, 208, 208))
+    dark.setColor(QPalette.Button, QColor(53, 53, 53))
+    dark.setColor(QPalette.ButtonText, QColor(208, 208, 208))
+    dark.setColor(QPalette.BrightText, QColor(255, 51, 51))
+    dark.setColor(QPalette.Link, QColor(86, 152, 195))
+    dark.setColor(QPalette.Highlight, QColor(86, 152, 195))
+    dark.setColor(QPalette.HighlightedText, QColor(0, 0, 0))
+    dark.setColor(QPalette.Disabled, QPalette.Text, QColor(128, 128, 128))
+    dark.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(128, 128, 128))
+    app.setPalette(dark)
 
     window = MainWindow()
     window.show()
